@@ -161,7 +161,7 @@ def _request_with_retry(url, max_retries=MAX_RETRIES):
             ) from exc
 
         # Check for GraphQL-level errors
-        if "errors" in data:
+        if data.get("errors"):
             error_msgs = [e.get("message", str(e)) for e in data["errors"]]
             joined = "; ".join(error_msgs)
             if "PersistedQueryNotFound" in joined:
