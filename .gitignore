@@ -9,3 +9,6 @@ build/
 .venv/
 env/
 venv/
+
+# Debug cache (raw API responses)
+data/cache/*.json

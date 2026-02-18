@@ -7,7 +7,7 @@ Track GTA Online weekly updates, discounts, events, and check your wishlist.
 import argparse
 import sys
 
-from src.scraper import fetch_newswire_page, get_latest_articles, fetch_article
+from src.scraper import fetch_newswire_articles, get_latest_weekly_update, test_scraper
 from src.parser import parse_article
 from src.wishlist import add_item, remove_item, list_wishlist, check_discounts
 from src.digest import print_digest
@@ -16,28 +16,46 @@ from src.digest import print_digest
 def cmd_check(args):
     """Fetch the latest newswire and display the weekly digest."""
     print("Fetching latest GTA Online newswire...")
-    soup = fetch_newswire_page()
-    if soup is None:
-        print("Failed to fetch newswire. Check your internet connection.")
+    weekly = get_latest_weekly_update()
+    if weekly is None:
+        print("Could not find a recent weekly update article.")
+        print("Try running with --list to see all recent articles.")
         sys.exit(1)
 
-    articles = get_latest_articles(soup)
-    if not articles:
-        print("No articles found on the newswire page.")
-        sys.exit(1)
+    print(f"Latest weekly update: {weekly['title']}")
+    print(f"Date: {weekly['date']}")
+    print(f"URL: {weekly['url']}")
 
-    # Fetch and parse the most recent article
-    latest = articles[0]
-    print(f"Latest article: {latest['title']}")
-    print(f"URL: {latest['url']}")
+    # The parser still works on HTML — for now show article metadata
+    # Full HTML parsing can be added later by fetching the article page
+    article_info = {
+        "discounts": [],
+        "events": [],
+        "podium_vehicle": None,
+    }
 
-    article_soup = fetch_article(latest["url"])
-    article_info = parse_article(article_soup)
-
-    # Check wishlist against discounts
     wishlist_matches = check_discounts(article_info["discounts"])
-
     print_digest(article_info, wishlist_matches)
+
+
+def cmd_list(args):
+    """List recent GTA Online newswire articles."""
+    result = fetch_newswire_articles(page=1)
+    if result is None:
+        print("Failed to fetch articles. Check your internet connection.")
+        sys.exit(1)
+
+    articles = result["articles"]
+    print(f"\nLatest GTA Online articles ({len(articles)} results):\n")
+    for i, art in enumerate(articles, 1):
+        print(f"  {i:2d}. [{art['date']}] {art['title']}")
+        print(f"      {art['url']}")
+
+
+def cmd_test(args):
+    """Run the scraper integration test."""
+    success = test_scraper()
+    sys.exit(0 if success else 1)
 
 
 def cmd_wishlist_add(args):
@@ -63,6 +81,12 @@ def main():
 
     # check command
     subparsers.add_parser("check", help="Fetch and display the latest weekly update")
+
+    # list command
+    subparsers.add_parser("list", help="List recent GTA Online newswire articles")
+
+    # test command
+    subparsers.add_parser("test", help="Run scraper integration test")
 
     # wishlist commands
     wish_parser = subparsers.add_parser("wishlist", help="Manage your wishlist")
@@ -95,6 +119,10 @@ def main():
 
     if args.command == "check":
         cmd_check(args)
+    elif args.command == "list":
+        cmd_list(args)
+    elif args.command == "test":
+        cmd_test(args)
     elif args.command == "wishlist":
         if args.wishlist_command == "add":
             cmd_wishlist_add(args)
