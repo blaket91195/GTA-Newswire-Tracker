@@ -5,7 +5,10 @@ def format_digest(article_info, wishlist_matches=None):
     """Format the parsed article data into a readable digest.
 
     Args:
-        article_info: Dict with 'discounts', 'events', 'podium_vehicle' keys.
+        article_info: Dict with 'bonuses', 'discounts', 'podium_vehicle' keys.
+            - bonuses: list of strings (e.g. "2X on Cayo Perico Heist")
+            - discounts: list of dicts {"item": ..., "discount": ..., "category": ...}
+            - podium_vehicle: str or None
         wishlist_matches: Optional list of wishlist items currently on sale.
 
     Returns:
@@ -25,21 +28,26 @@ def format_digest(article_info, wishlist_matches=None):
     else:
         lines.append("  No podium vehicle info found.")
 
-    # Events & Bonuses
+    # Bonuses
     lines.append("")
-    lines.append("EVENTS & BONUSES:")
-    if article_info.get("events"):
-        for event in article_info["events"]:
-            lines.append(f"  - {event}")
+    lines.append("BONUSES & EVENTS:")
+    bonuses = article_info.get("bonuses", [])
+    if bonuses:
+        for bonus in bonuses:
+            lines.append(f"  - {bonus}")
     else:
-        lines.append("  No events found.")
+        lines.append("  No bonuses found.")
 
     # Discounts
     lines.append("")
     lines.append("DISCOUNTS:")
-    if article_info.get("discounts"):
-        for discount in article_info["discounts"]:
-            lines.append(f"  - {discount}")
+    discounts = article_info.get("discounts", [])
+    if discounts:
+        for disc in discounts:
+            if isinstance(disc, dict):
+                lines.append(f"  - {disc['discount']} off {disc['item']} [{disc.get('category', '')}]")
+            else:
+                lines.append(f"  - {disc}")
     else:
         lines.append("  No discounts found.")
 
@@ -63,7 +71,7 @@ def print_digest(article_info, wishlist_matches=None):
     """Print the formatted digest to stdout.
 
     Args:
-        article_info: Dict with 'discounts', 'events', 'podium_vehicle' keys.
+        article_info: Dict with 'bonuses', 'discounts', 'podium_vehicle' keys.
         wishlist_matches: Optional list of wishlist items currently on sale.
     """
     print(format_digest(article_info, wishlist_matches))

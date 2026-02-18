@@ -10,5 +10,6 @@ build/
 env/
 venv/
 
-# Debug cache (raw API responses)
+# Debug cache (raw API responses and cached article HTML)
 data/cache/*.json
+data/cache/*.html

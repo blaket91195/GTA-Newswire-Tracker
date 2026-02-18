@@ -8,7 +8,7 @@ import argparse
 import sys
 
 from src.scraper import fetch_newswire_articles, get_latest_weekly_update, test_scraper
-from src.parser import parse_article
+from src.parser import parse_full_article, test_parser
 from src.wishlist import add_item, remove_item, list_wishlist, check_discounts
 from src.digest import print_digest
 
@@ -19,22 +19,27 @@ def cmd_check(args):
     weekly = get_latest_weekly_update()
     if weekly is None:
         print("Could not find a recent weekly update article.")
-        print("Try running with --list to see all recent articles.")
+        print("Try running 'list' to see all recent articles.")
         sys.exit(1)
 
     print(f"Latest weekly update: {weekly['title']}")
     print(f"Date: {weekly['date']}")
     print(f"URL: {weekly['url']}")
 
-    # The parser still works on HTML — for now show article metadata
-    # Full HTML parsing can be added later by fetching the article page
-    article_info = {
-        "discounts": [],
-        "events": [],
-        "podium_vehicle": None,
-    }
+    # Fetch and parse the full article content
+    print("Fetching article content...")
+    parsed = parse_full_article(weekly["url"])
 
-    wishlist_matches = check_discounts(article_info["discounts"])
+    if parsed is None:
+        print("Could not fetch article content.")
+        article_info = {"discounts": [], "bonuses": [], "podium_vehicle": None}
+    else:
+        article_info = parsed
+
+    # Check wishlist against discount item names
+    discount_items = [d["item"] for d in article_info.get("discounts", [])]
+    wishlist_matches = check_discounts(discount_items)
+
     print_digest(article_info, wishlist_matches)
 
 
@@ -55,6 +60,12 @@ def cmd_list(args):
 def cmd_test(args):
     """Run the scraper integration test."""
     success = test_scraper()
+    sys.exit(0 if success else 1)
+
+
+def cmd_test_parser(args):
+    """Run the parser integration test."""
+    success = test_parser()
     sys.exit(0 if success else 1)
 
 
@@ -85,8 +96,9 @@ def main():
     # list command
     subparsers.add_parser("list", help="List recent GTA Online newswire articles")
 
-    # test command
+    # test commands
     subparsers.add_parser("test", help="Run scraper integration test")
+    subparsers.add_parser("test-parser", help="Run parser integration test")
 
     # wishlist commands
     wish_parser = subparsers.add_parser("wishlist", help="Manage your wishlist")
@@ -123,6 +135,8 @@ def main():
         cmd_list(args)
     elif args.command == "test":
         cmd_test(args)
+    elif args.command == "test-parser":
+        cmd_test_parser(args)
     elif args.command == "wishlist":
         if args.wishlist_command == "add":
             cmd_wishlist_add(args)
