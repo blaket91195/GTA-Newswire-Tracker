@@ -28,7 +28,7 @@ def cmd_check(args):
 
     # Fetch and parse the full article content
     print("Fetching article content...")
-    parsed = parse_full_article(weekly["url"])
+    parsed = parse_full_article(weekly["url"], blurb=weekly.get("blurb", ""))
 
     if parsed is None:
         print("Could not fetch article content.")

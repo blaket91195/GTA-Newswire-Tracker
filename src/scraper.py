@@ -236,12 +236,24 @@ def _parse_article(raw):
     block = preview.get("newswire_block") or {}
     image_url = block.get("d16x9") or block.get("square")
 
+    # Capture body/blurb/subtitle if the API returns them — the
+    # persisted query may or may not include these fields.
+    blurb = (
+        raw.get("body")
+        or raw.get("blurb")
+        or raw.get("content")
+        or raw.get("subtitle")
+        or raw.get("summary")
+        or ""
+    )
+
     return {
         "id": raw.get("id"),
         "url": url,
         "title": raw.get("title", ""),
         "date": raw.get("created_formatted", ""),
         "image_url": image_url,
+        "blurb": blurb,
         "tags": [
             t.get("name", "") for t in (raw.get("primary_tags") or [])
         ],

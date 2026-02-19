@@ -132,8 +132,14 @@ def fetch_article_content(article_url):
 def _extract_body_text(html):
     """Extract the readable body text from article HTML.
 
-    Rockstar's site is JS-heavy so the initial HTML may be sparse.
-    We try multiple selectors and also look for embedded JSON state.
+    Rockstar's site is JS-heavy — the HTML is often a thin shell with
+    an empty ``<body>`` and all content loaded via JavaScript.  We try
+    several strategies in order of reliability:
+
+    1. CSS selectors for known article-body containers.
+    2. Embedded JSON state (``__NEXT_DATA__``, ``window.__DATA__``).
+    3. Open Graph / Twitter meta-tag descriptions — these always
+       contain a usable summary even when the body is empty.
 
     Args:
         html: Raw HTML string.
@@ -154,21 +160,77 @@ def _extract_body_text(html):
         or soup.select_one("main")
     )
 
+    if body is not None and len(body.get_text(strip=True)) >= 100:
+        return body.get_text(separator="\n", strip=True)
+
     # Strategy 2: Look for JSON embedded in a <script> tag
-    # Rockstar sometimes embeds article data as __NEXT_DATA__ or similar
-    if body is None or len(body.get_text(strip=True)) < 100:
-        for script in soup.find_all("script"):
-            script_text = script.string or ""
-            if "__NEXT_DATA__" in script_text or '"body"' in script_text:
-                json_text = _extract_json_body(script_text)
-                if json_text and len(json_text) > 100:
-                    return json_text
+    for script in soup.find_all("script"):
+        script_text = script.string or ""
+        if "__NEXT_DATA__" in script_text or '"body"' in script_text:
+            json_text = _extract_json_body(script_text)
+            if json_text and len(json_text) > 100:
+                return json_text
 
-    if body is None:
-        body = soup.find("body") or soup
+    # Strategy 3: Extract from Open Graph / Twitter meta tags.
+    # Rockstar's HTML shell always includes og:description and
+    # twitter:description with a useful article summary.
+    meta_text = _extract_meta_description(soup)
+    if meta_text and len(meta_text) > 50:
+        logger.info("Using meta-tag description (%d chars)", len(meta_text))
+        return meta_text
 
-    text = body.get_text(separator="\n", strip=True)
+    # Last resort: whatever text the <body> contains
+    body_el = soup.find("body") or soup
+    text = body_el.get_text(separator="\n", strip=True)
     return text
+
+
+def _extract_meta_description(soup):
+    """Build article text from Open Graph / Twitter meta tags.
+
+    Rockstar's server-rendered HTML includes rich meta tags even though
+    the ``<body>`` is empty.  We combine the title and description to
+    produce a short but parseable article summary.
+
+    Returns:
+        Combined title + description string, or None.
+    """
+    # Gather the best title
+    title = None
+    for attr_pair in [
+        ("property", "og:title"),
+        ("name", "twitter:title"),
+    ]:
+        tag = soup.find("meta", attrs={attr_pair[0]: attr_pair[1]})
+        if tag and tag.get("content"):
+            title = tag["content"].strip()
+            break
+    if not title and soup.title and soup.title.string:
+        # Strip the " - Rockstar Games" suffix
+        raw = soup.title.string.strip()
+        title = raw.rsplit(" - Rockstar Games", 1)[0].strip() or raw
+
+    # Gather the best description
+    description = None
+    for attr_pair in [
+        ("property", "og:description"),
+        ("name", "twitter:description"),
+        ("name", "description"),
+    ]:
+        tag = soup.find("meta", attrs={attr_pair[0]: attr_pair[1]})
+        if tag and tag.get("content"):
+            description = tag["content"].strip()
+            break
+
+    if not title and not description:
+        return None
+
+    parts = []
+    if title:
+        parts.append(title)
+    if description:
+        parts.append(description)
+    return "\n".join(parts)
 
 
 def _extract_json_body(script_text):
@@ -479,6 +541,8 @@ _PODIUM_PATTERNS = [
     re.compile(r"Test\s+Track[\s:–—\-]+(?:the\s+)?(.+?)(?:\.|,\s|\n|$)", re.IGNORECASE),
     # "spin the Lucky Wheel ... win the [vehicle]"
     re.compile(r"Lucky\s+Wheel.*?win\s+(?:the\s+|a\s+)?(.+?)(?:\.|,\s|\n|$)", re.IGNORECASE | re.DOTALL),
+    # "[vehicle] as this week's Podium Vehicle / Prize Ride" (common in meta descriptions)
+    re.compile(r"(?:the\s+)(\S+(?:\s+\S+){0,4}?)\s+as\s+(?:this\s+week'?s?\s+)?(?:the\s+)?(?:Podium\s+Vehicle|Prize\s+Ride|Test\s+Track)", re.IGNORECASE),
 ]
 
 
@@ -509,7 +573,7 @@ def parse_podium_vehicle(article_text):
 # ---------------------------------------------------------------------------
 
 
-def parse_full_article(article_url):
+def parse_full_article(article_url, blurb=""):
     """Fetch an article and parse all GTA Online weekly info from it.
 
     Combines fetch_article_content(), parse_discounts(),
@@ -517,6 +581,9 @@ def parse_full_article(article_url):
 
     Args:
         article_url: Full URL to a Rockstar Newswire article.
+        blurb: Optional extra text from the GraphQL API response
+            (body/blurb/subtitle). Appended to the fetched article text
+            to improve parsing coverage.
 
     Returns:
         Dict with keys:
@@ -530,6 +597,10 @@ def parse_full_article(article_url):
     if text is None:
         logger.error("Could not fetch article content: %s", article_url)
         return None
+
+    # Supplement with any blurb text from the API
+    if blurb:
+        text = text + "\n" + blurb
 
     result = {
         "discounts": parse_discounts(text),
@@ -585,6 +656,11 @@ def test_parser():
     if text is None:
         print("  FAIL: Could not fetch article content.")
         return False
+
+    blurb = weekly.get("blurb", "")
+    if blurb:
+        print(f"  API blurb ({len(blurb)} chars): {blurb[:200]}...")
+        text = text + "\n" + blurb
 
     print(f"  OK: Extracted {len(text)} characters of text")
     # Show first 500 chars as preview
