@@ -197,27 +197,31 @@ def _extract_meta_description(soup):
     """
     # Gather the best title
     title = None
-    for attr_pair in [
-        ("property", "og:title"),
-        ("name", "twitter:title"),
+    # Rockstar uses property= for both OG and Twitter meta tags
+    for attrs in [
+        {"property": "og:title"},
+        {"property": "twitter:title"},
+        {"name": "twitter:title"},
     ]:
-        tag = soup.find("meta", attrs={attr_pair[0]: attr_pair[1]})
+        tag = soup.find("meta", attrs=attrs)
         if tag and tag.get("content"):
             title = tag["content"].strip()
             break
     if not title and soup.title and soup.title.string:
-        # Strip the " - Rockstar Games" suffix
-        raw = soup.title.string.strip()
-        title = raw.rsplit(" - Rockstar Games", 1)[0].strip() or raw
+        title = soup.title.string.strip()
+    # Always strip the " - Rockstar Games" suffix
+    if title:
+        title = title.rsplit(" - Rockstar Games", 1)[0].strip()
 
     # Gather the best description
     description = None
-    for attr_pair in [
-        ("property", "og:description"),
-        ("name", "twitter:description"),
-        ("name", "description"),
+    for attrs in [
+        {"property": "og:description"},
+        {"property": "twitter:description"},
+        {"name": "twitter:description"},
+        {"name": "description"},
     ]:
-        tag = soup.find("meta", attrs={attr_pair[0]: attr_pair[1]})
+        tag = soup.find("meta", attrs=attrs)
         if tag and tag.get("content"):
             description = tag["content"].strip()
             break
@@ -469,6 +473,30 @@ _RE_MULT_GTA_ONLY = re.compile(
     re.IGNORECASE,
 )
 
+# Reversed: "Deadline Duet Mode for Triple Rewards"
+# Activity comes BEFORE the multiplier word.  The optional prefixes
+# (in, the, new) are consumed outside the capture group so that only
+# the activity name is captured.
+_RE_REVERSED_MULT = re.compile(
+    r"(?:in\s+)?(?:the\s+)?(?:new\s+)?(\w{3,}(?:\s+\w+){0,3}?)"
+    r"\s+(?:Mode\s+)?(?:for|with)\s+"
+    r"(Double|Triple|Quadruple)\s+(?:Rewards?|GTA\$?\s*(?:and|&)\s*RP|payouts?)",
+    re.IGNORECASE,
+)
+
+# Trailing time phrases to strip from activity names
+_RE_TRAILING_TIME = re.compile(
+    r"\s+(?:this|next|the\s+next|all|every)\s+"
+    r"(?:week|weeks|month|weekend|two\s+weeks)\s*$",
+    re.IGNORECASE,
+)
+
+# If the entire activity (after stripping) is just a time reference, skip it
+_RE_ONLY_TIME = re.compile(
+    r"^(?:the\s+)?(?:next|this|all)?\s*(?:week|weeks|days?|hours?|month|today|weekend|two\s+weeks)$",
+    re.IGNORECASE,
+)
+
 
 def parse_bonuses(article_text):
     """Extract 2X/3X/Double/Triple bonus events from article text.
@@ -486,38 +514,43 @@ def parse_bonuses(article_text):
     bonuses = []
     seen = set()
 
-    patterns = [
-        _RE_MULT_EXPLICIT,
-        _RE_MULT_REWARDS,
-        _RE_MULT_GTA_ONLY,
-        _RE_MULT_SHORT,
-    ]
-
-    for pattern in patterns:
-        for match in pattern.finditer(article_text):
-            mult = match.group(1) + "X"
-            activity = _clean(match.group(2))
-            key = activity.lower()
-            if activity and key not in seen:
-                seen.add(key)
-                bonuses.append(f"{mult} on {activity}")
-
-    for pattern in [_RE_WORD_MULT, _RE_WORD_MULT_SHORT]:
-        for match in pattern.finditer(article_text):
-            mult = _normalise_multiplier(match.group(1))
-            activity = _clean(match.group(2))
-            key = activity.lower()
-            if activity and key not in seen:
-                seen.add(key)
-                bonuses.append(f"{mult} on {activity}")
-
-    for match in _RE_ACTIVITY_PAYING.finditer(article_text):
-        activity = _clean(match.group(1))
-        mult = _normalise_multiplier(match.group(2))
+    def _add(mult, activity):
+        activity = _clean(activity)
+        if not activity or len(activity) < 3:
+            return
+        # Strip trailing time phrases: "Deadline Duet this week" → "Deadline Duet"
+        activity = _RE_TRAILING_TIME.sub("", activity).strip()
+        # Strip leading articles: "the Cayo Perico" → "Cayo Perico"
+        activity = re.sub(r"^(?:the|a|an)\b\s*", "", activity, flags=re.IGNORECASE).strip()
+        if not activity or len(activity) < 3:
+            return
+        # Skip if the entire remaining text is just a time reference
+        if _RE_ONLY_TIME.match(activity):
+            return
         key = activity.lower()
-        if activity and key not in seen:
+        if key not in seen:
             seen.add(key)
             bonuses.append(f"{mult} on {activity}")
+
+    # Numeric patterns: "2X GTA$ and RP on ...", "3X Rewards on ...", etc.
+    for pattern in [_RE_MULT_EXPLICIT, _RE_MULT_REWARDS, _RE_MULT_GTA_ONLY, _RE_MULT_SHORT]:
+        for match in pattern.finditer(article_text):
+            _add(match.group(1) + "X", match.group(2))
+
+    # Word patterns: "Double/Triple Rewards on ..."
+    for pattern in [_RE_WORD_MULT, _RE_WORD_MULT_SHORT]:
+        for match in pattern.finditer(article_text):
+            _add(_normalise_multiplier(match.group(1)), match.group(2))
+
+    # Reversed: "Deadline Duet for Triple Rewards"
+    for match in _RE_REVERSED_MULT.finditer(article_text):
+        activity = match.group(1)
+        mult = _normalise_multiplier(match.group(2))
+        _add(mult, activity)
+
+    # Activity-first: "Contact Missions paying out Double"
+    for match in _RE_ACTIVITY_PAYING.finditer(article_text):
+        _add(_normalise_multiplier(match.group(2)), match.group(1))
 
     return bonuses
 
