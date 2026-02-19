@@ -373,7 +373,7 @@ def _find_body_in_json(data, depth=0):
 
 # "40% off the Oppressor Mk II", "30% off all Weaponized Vehicles"
 _RE_DISCOUNT_OFF = re.compile(
-    r"(\d{1,2})%\s+off\s+(?:the\s+|all\s+)?(.+?)(?:\.|,\s|\n|$)",
+    r"(\d{1,2})%\s+off\s+(?:the\s+|all\s+)?(.+?)(?:\.|,\s|[–—]|\n|$)",
     re.IGNORECASE,
 )
 
@@ -385,7 +385,7 @@ _RE_DISCOUNT_ITEM_FIRST = re.compile(
 
 # "30% discount on the Oppressor Mk II"
 _RE_DISCOUNT_ON = re.compile(
-    r"(\d{1,2})%\s+discount\s+on\s+(?:the\s+|all\s+)?(.+?)(?:\.|,\s|\n|$)",
+    r"(\d{1,2})%\s+discount\s+on\s+(?:the\s+|all\s+)?(.+?)(?:\.|,\s|[–—]|\n|$)",
     re.IGNORECASE,
 )
 
@@ -403,7 +403,7 @@ _RE_DISCOUNT_REDUCED = re.compile(
 
 # "40 percent off the Oppressor"
 _RE_DISCOUNT_PERCENT_WORD = re.compile(
-    r"(\d{1,2})\s+percent\s+off\s+(?:the\s+|all\s+)?(.+?)(?:\.|,\s|\n|$)",
+    r"(\d{1,2})\s+percent\s+off\s+(?:the\s+|all\s+)?(.+?)(?:\.|,\s|[–—]|\n|$)",
     re.IGNORECASE,
 )
 
@@ -438,7 +438,21 @@ def _guess_category(item_name, surrounding_text=""):
 
 def _clean(text):
     """Strip trailing punctuation and whitespace."""
-    return text.strip().rstrip(".,;:–—-").strip()
+    text = text.strip().rstrip(".,;:–—-").strip()
+    # Strip trailing "– X% off" that gets captured when both patterns match
+    text = re.sub(r"\s*[–—\-]+\s*\d{1,2}%\s+off\s*$", "", text, flags=re.IGNORECASE).strip()
+    return text
+
+
+# Reject discount items that are clearly not real item names
+_RE_DISCOUNT_JUNK = re.compile(
+    r"^(?:through|until|from|before|after)\s+"      # date ranges
+    r"|^(?:selected|various|certain|some)\s+items?"  # vague references
+    r"|(?:for\s+GTA\+|GTA\+\s+Members)"              # membership text
+    r"|\b(?:January|February|March|April|May|June|July|August|"
+    r"September|October|November|December)\s+\d",    # dates
+    re.IGNORECASE,
+)
 
 
 def parse_discounts(article_text):
@@ -456,33 +470,33 @@ def parse_discounts(article_text):
     discounts = []
     seen = set()
 
+    def _add_discount(item, pct):
+        item = _clean(item)
+        if not item or len(item) < 3:
+            return
+        # Skip junk matches (dates, GTA+ membership text, etc.)
+        if _RE_DISCOUNT_JUNK.search(item):
+            return
+        # Strip parenthetical vehicle class: "Autarch (Super)" → "Autarch"
+        # but keep in key for dedup so "Autarch (Super)" and "Autarch" don't dup
+        key = item.lower()
+        if key not in seen:
+            seen.add(key)
+            discounts.append({
+                "item": item,
+                "discount": pct,
+                "category": _guess_category(item),
+            })
+
+    # Patterns where item comes first (more precise — run first)
+    for pattern in [_RE_DISCOUNT_ITEM_FIRST, _RE_DISCOUNT_PAREN, _RE_DISCOUNT_REDUCED]:
+        for match in pattern.finditer(article_text):
+            _add_discount(match.group(1), match.group(2) + "%")
+
     # Patterns where percentage comes first
     for pattern in [_RE_DISCOUNT_OFF, _RE_DISCOUNT_ON, _RE_DISCOUNT_PERCENT_WORD]:
         for match in pattern.finditer(article_text):
-            pct = match.group(1) + "%"
-            item = _clean(match.group(2))
-            key = item.lower()
-            if item and key not in seen and len(item) > 2:
-                seen.add(key)
-                discounts.append({
-                    "item": item,
-                    "discount": pct,
-                    "category": _guess_category(item),
-                })
-
-    # Patterns where item comes first
-    for pattern in [_RE_DISCOUNT_ITEM_FIRST, _RE_DISCOUNT_PAREN, _RE_DISCOUNT_REDUCED]:
-        for match in pattern.finditer(article_text):
-            item = _clean(match.group(1))
-            pct = match.group(2) + "%"
-            key = item.lower()
-            if item and key not in seen and len(item) > 2:
-                seen.add(key)
-                discounts.append({
-                    "item": item,
-                    "discount": pct,
-                    "category": _guess_category(item),
-                })
+            _add_discount(match.group(2), match.group(1) + "%")
 
     return discounts
 
@@ -596,9 +610,9 @@ def parse_bonuses(article_text):
             return
         # Strip trailing time phrases: "Deadline Duet this week" → "Deadline Duet"
         activity = _RE_TRAILING_TIME.sub("", activity).strip()
-        # Strip leading articles: "the Cayo Perico" → "Cayo Perico"
-        activity = re.sub(r"^(?:the|a|an)\b\s*", "", activity, flags=re.IGNORECASE).strip()
-        if not activity or len(activity) < 3:
+        # Strip leading articles / filler: "the Cayo Perico" → "Cayo Perico"
+        activity = re.sub(r"^(?:the|a|an|all)\b\s*", "", activity, flags=re.IGNORECASE).strip()
+        if not activity or len(activity) < 4:
             return
         # Skip if the entire remaining text is just a time reference
         if _RE_ONLY_TIME.match(activity):
