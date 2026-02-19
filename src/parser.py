@@ -66,26 +66,102 @@ def _save_cache(url, html):
     logger.debug("Cached article: %s", path)
 
 
+def _has_rendered_body(html):
+    """Return True if the HTML has substantial body content (not just a JS shell)."""
+    soup = BeautifulSoup(html, "lxml")
+    body = soup.find("body")
+    if body is None:
+        return False
+    text = body.get_text(strip=True)
+    return len(text) >= 200
+
+
+def _fetch_with_playwright(url):
+    """Render the page with a headless browser and return the full HTML.
+
+    Playwright must be installed separately::
+
+        pip install playwright
+        playwright install chromium
+
+    Returns None if Playwright is not installed or rendering fails.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # noqa: F811
+    except ImportError:
+        logger.debug("Playwright not installed — skipping JS rendering")
+        return None
+
+    logger.info("Rendering article with Playwright: %s", url)
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(
+                user_agent=_HEADERS["User-Agent"],
+                locale="en-US",
+            )
+            page.goto(url, wait_until="networkidle", timeout=30000)
+            # Give the SPA extra time to hydrate content
+            page.wait_for_timeout(3000)
+            # Try waiting for an article body container to appear
+            for selector in ["div[class*='Article']", "article", "main"]:
+                try:
+                    page.wait_for_selector(selector, timeout=5000)
+                    break
+                except Exception:
+                    continue
+            html = page.content()
+            browser.close()
+
+        if _has_rendered_body(html):
+            logger.info("Playwright rendered %d chars of HTML", len(html))
+            return html
+        logger.warning("Playwright rendered page but body still empty")
+        return html  # return anyway — meta tags may differ
+    except Exception as exc:
+        logger.warning("Playwright rendering failed: %s", exc)
+        return None
+
+
 def fetch_article_content(article_url):
     """Fetch an article page and extract the main body text.
 
-    Caches the raw HTML in data/cache/ to avoid re-fetching during
-    development.  On failure returns None.
+    Tries rendering strategies in order:
+
+    1. **Cache** — return immediately if we have a cached version with
+       a real rendered body.
+    2. **Playwright** — use a headless Chromium browser to render the
+       JavaScript-heavy Rockstar page (requires ``playwright``).
+    3. **Plain HTTP** — fall back to ``requests.get()`` + meta-tag
+       extraction when Playwright is unavailable.
+
+    Caches the best HTML in ``data/cache/`` to avoid re-fetching.
 
     Args:
         article_url: Full URL, e.g.
-            "https://www.rockstargames.com/newswire/article/..."
+            ``"https://www.rockstargames.com/newswire/article/..."``
 
     Returns:
         Cleaned article body text (str), or None on error.
     """
-    # Check cache first
+    # Check cache — only trust it if the body has real content
     cached = _load_cached(article_url)
-    if cached is not None:
-        logger.info("Using cached article: %s", article_url)
+    if cached is not None and _has_rendered_body(cached):
+        logger.info("Using cached rendered article: %s", article_url)
         return _extract_body_text(cached)
 
-    # Fetch with retry
+    # Strategy 1: Playwright (headless browser)
+    pw_html = _fetch_with_playwright(article_url)
+    if pw_html is not None:
+        _save_cache(article_url, pw_html)
+        return _extract_body_text(pw_html)
+
+    # Strategy 2: If we have a cached shell (meta tags only), use it
+    if cached is not None:
+        logger.info("Using cached article (meta-tags only): %s", article_url)
+        return _extract_body_text(cached)
+
+    # Strategy 3: Plain HTTP fetch with retry
     last_error = None
     for attempt in range(1, 4):
         logger.info("Fetching article (attempt %d/3): %s", attempt, article_url)
