@@ -22,11 +22,18 @@ def format_digest(article_info, wishlist_matches=None):
 
     # Podium / Prize vehicle
     lines.append("")
-    lines.append("PODIUM / PRIZE VEHICLE:")
+    lines.append("PODIUM VEHICLE:")
     if article_info.get("podium_vehicle"):
         lines.append(f"  >> {article_info['podium_vehicle']}")
     else:
-        lines.append("  No podium vehicle info found.")
+        lines.append("  Not found.")
+
+    lines.append("")
+    lines.append("PRIZE RIDE:")
+    if article_info.get("prize_ride"):
+        lines.append(f"  >> {article_info['prize_ride']}")
+    else:
+        lines.append("  Not found.")
 
     # Bonuses
     lines.append("")

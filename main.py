@@ -8,13 +8,37 @@ import argparse
 import sys
 
 from src.scraper import fetch_newswire_articles, get_latest_weekly_update, test_scraper
+from src.reddit_scraper import fetch_weekly_update as reddit_fetch, test_reddit_scraper
 from src.parser import parse_full_article, test_parser
 from src.wishlist import add_item, remove_item, list_wishlist, check_discounts
 from src.digest import print_digest
 
 
 def cmd_check(args):
-    """Fetch the latest newswire and display the weekly digest."""
+    """Fetch the latest weekly update and display the digest.
+
+    Tries Reddit first (community posts have structured data), then
+    falls back to the Rockstar Newswire API + article scraping.
+    """
+    source = getattr(args, "source", "reddit")
+
+    if source in ("reddit", "auto"):
+        print("Fetching latest weekly update from r/gtaonline...")
+        result = reddit_fetch()
+
+        if result and (result["discounts"] or result["podium_vehicle"]):
+            print(f"Source: Reddit — {result['title']}")
+            print(f"URL: {result['source_url']}")
+
+            discount_items = [d["item"] for d in result.get("discounts", [])]
+            wishlist_matches = check_discounts(discount_items)
+            print_digest(result, wishlist_matches)
+            return
+
+        if source == "reddit":
+            print("Reddit source had no detailed data, trying Rockstar API...")
+
+    # Fallback: Rockstar Newswire API
     print("Fetching latest GTA Online newswire...")
     weekly = get_latest_weekly_update()
     if weekly is None:
@@ -26,7 +50,6 @@ def cmd_check(args):
     print(f"Date: {weekly['date']}")
     print(f"URL: {weekly['url']}")
 
-    # Fetch and parse the full article content
     print("Fetching article content...")
     parsed = parse_full_article(weekly["url"], blurb=weekly.get("blurb", ""))
 
@@ -36,7 +59,6 @@ def cmd_check(args):
     else:
         article_info = parsed
 
-    # Check wishlist against discount item names
     discount_items = [d["item"] for d in article_info.get("discounts", [])]
     wishlist_matches = check_discounts(discount_items)
 
@@ -91,7 +113,12 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # check command
-    subparsers.add_parser("check", help="Fetch and display the latest weekly update")
+    check_parser = subparsers.add_parser("check", help="Fetch and display the latest weekly update")
+    check_parser.add_argument(
+        "--source", choices=["reddit", "rockstar", "auto"],
+        default="reddit",
+        help="Data source: reddit (default), rockstar (API+scrape), auto (try both)",
+    )
 
     # list command
     subparsers.add_parser("list", help="List recent GTA Online newswire articles")
@@ -99,6 +126,7 @@ def main():
     # test commands
     subparsers.add_parser("test", help="Run scraper integration test")
     subparsers.add_parser("test-parser", help="Run parser integration test")
+    subparsers.add_parser("test-reddit", help="Run Reddit scraper test")
 
     # wishlist commands
     wish_parser = subparsers.add_parser("wishlist", help="Manage your wishlist")
@@ -137,6 +165,9 @@ def main():
         cmd_test(args)
     elif args.command == "test-parser":
         cmd_test_parser(args)
+    elif args.command == "test-reddit":
+        success = test_reddit_scraper()
+        sys.exit(0 if success else 1)
     elif args.command == "wishlist":
         if args.wishlist_command == "add":
             cmd_wishlist_add(args)
