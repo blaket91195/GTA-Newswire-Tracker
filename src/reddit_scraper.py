@@ -190,6 +190,55 @@ def get_latest_weekly_post():
 
 
 # ---------------------------------------------------------------------------
+# Markdown cleaning
+# ---------------------------------------------------------------------------
+
+
+def _strip_markdown(text):
+    """Strip Reddit markdown formatting to get clean plain text.
+
+    Handles:
+    - [**Bold Link Text**](url)**:** value  → Bold Link Text: value
+    - [Link Text](url)                      → Link Text
+    - **bold**                               → bold
+    - *italic*                               → italic
+    - ~~strikethrough~~                      → strikethrough
+    - &amp; and other HTML entities
+    """
+    # Step 1: Handle Reddit's complex link+bold patterns
+    # [**Podium Vehicle**](url)**:** Karin Sultan RS Classic
+    # → Podium Vehicle: Karin Sultan RS Classic
+    text = re.sub(
+        r'\[(?:\*\*)?([^]]*?)(?:\*\*)?\]\([^)]*\)(?:\*\*)?:?\s*',
+        r'\1: ',
+        text,
+    )
+
+    # Step 2: Clean up any remaining markdown links [text](url)
+    text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
+
+    # Step 3: Strip bold/italic markers
+    text = re.sub(r'\*\*([^*]*)\*\*', r'\1', text)
+    text = re.sub(r'\*([^*]*)\*', r'\1', text)
+
+    # Step 4: Strip strikethrough
+    text = re.sub(r'~~([^~]*)~~', r'\1', text)
+
+    # Step 5: HTML entities
+    text = text.replace('&amp;', '&')
+    text = text.replace('&lt;', '<')
+    text = text.replace('&gt;', '>')
+    text = text.replace('&#39;', "'")
+    text = text.replace('&quot;', '"')
+
+    # Step 6: Clean up double colons/spaces from link stripping
+    text = re.sub(r':\s*:', ':', text)
+    text = re.sub(r'  +', ' ', text)
+
+    return text
+
+
+# ---------------------------------------------------------------------------
 # Markdown parsing — extract structured weekly info
 # ---------------------------------------------------------------------------
 
@@ -253,6 +302,7 @@ def parse_reddit_discounts(text):
     - "Insurgent Pick-Up — 30% off"
     - "- Insurgent Pick-Up (30% off)"
     - "| Vehicle | 30% |"
+    - "Insurgent Pick-Up - $500,000 - 30% Discount"
 
     Returns:
         List of dicts: [{"item": ..., "discount": ..., "category": ...}]
@@ -260,58 +310,83 @@ def parse_reddit_discounts(text):
     discounts = []
     seen = set()
 
+    # Reject items that are clearly not item names
+    junk_re = re.compile(
+        r"^(?:for|through|until|all|gta\+|members?|players?)$"
+        r"|^(?:for\s+)?gta\+\s+members",
+        re.IGNORECASE,
+    )
+
+    def _add(item, pct):
+        item = item.strip().rstrip(".,;:–—-*()").strip()
+        # Strip leading bullet chars and whitespace
+        item = re.sub(r"^[-•*>\s]+", "", item).strip()
+        # Strip trailing price info: "Item - $500,000" → "Item"
+        item = re.sub(r"\s*-\s*\$[\d,]+\s*$", "", item).strip()
+        pct = pct.strip().rstrip("%")
+
+        if not item or len(item) < 3 or not pct.isdigit():
+            return
+        if junk_re.search(item):
+            return
+
+        key = item.lower()
+        if key not in seen:
+            seen.add(key)
+            discounts.append({
+                "item": item,
+                "discount": f"{pct}%",
+                "category": _guess_category(item),
+            })
+
     patterns = [
-        # "30% off the Insurgent Pick-Up"
-        re.compile(
+        # "30% off the Insurgent Pick-Up" / "30% off Insurgent"
+        (re.compile(
             r"(\d{1,2})%\s+off\s+(?:the\s+|all\s+)?(.+?)(?:\s*[\|,\n]|$)",
-            re.IGNORECASE,
-        ),
+            re.IGNORECASE | re.MULTILINE,
+        ), "pct_first"),
         # "Insurgent Pick-Up — 30% off"
-        re.compile(
-            r"[-•*]\s*(.+?)\s*[–—\-]+\s*(\d{1,2})%\s+off",
-            re.IGNORECASE,
-        ),
+        (re.compile(
+            r"^[-•*>]?\s*(.+?)\s*[–—\-]+\s*(\d{1,2})%\s*(?:off|discount)",
+            re.IGNORECASE | re.MULTILINE,
+        ), "item_first"),
         # "Insurgent Pick-Up (30% off)"
-        re.compile(
-            r"[-•*]\s*(.+?)\s*\((\d{1,2})%\s*(?:off|discount)\)",
+        (re.compile(
+            r"[-•*>]?\s*(.+?)\s*\((\d{1,2})%\s*(?:off|discount)\)",
             re.IGNORECASE,
-        ),
+        ), "item_first"),
         # "- 30% off: Insurgent Pick-Up"
-        re.compile(
-            r"[-•*]\s*(\d{1,2})%\s*off[:\s]+(.+?)(?:\s*[\|,\n]|$)",
+        (re.compile(
+            r"[-•*>]\s*(\d{1,2})%\s*off[:\s]+(.+?)(?:\s*[\|,\n]|$)",
+            re.IGNORECASE | re.MULTILINE,
+        ), "pct_first"),
+        # Table format: "| Insurgent Pick-Up | 30% |" or "| Insurgent | $500,000 | 30% |"
+        (re.compile(
+            r"\|\s*([^|]+?)\s*\|[^|]*?(\d{1,2})%[^|]*\|",
+        ), "item_first"),
+        # "Item - $price - 30% Discount" (common Reddit table-like format)
+        (re.compile(
+            r"^[-•*>]?\s*(.+?)\s*-\s*\$[\d,]+\s*-\s*(\d{1,2})%",
+            re.IGNORECASE | re.MULTILINE,
+        ), "item_first"),
+        # "Item ($price / 30% off)" or "Item ($price, 30% off)"
+        (re.compile(
+            r"[-•*>]?\s*(.+?)\s*\(\$[\d,]+\s*[/,]\s*(\d{1,2})%\s*(?:off|discount)?\)",
             re.IGNORECASE,
-        ),
-        # Table format: "| Insurgent Pick-Up | 30% |"
-        re.compile(
-            r"\|\s*(.+?)\s*\|\s*(\d{1,2})%\s*\|",
-        ),
+        ), "item_first"),
+        # Line containing "X% Discount" with context: "Counterfeit Cash Factory: 40% Discount"
+        (re.compile(
+            r"^[-•*>]?\s*(.+?)\s*[:–—\-]+\s*(\d{1,2})%\s*Discount",
+            re.IGNORECASE | re.MULTILINE,
+        ), "item_first"),
     ]
 
-    for pattern in patterns:
+    for pattern, order in patterns:
         for match in pattern.finditer(text):
-            groups = match.groups()
-            # Figure out which group is item vs percentage
-            if groups[0].isdigit() or (len(groups[0]) <= 3 and groups[0].rstrip('%').isdigit()):
-                pct, item = groups[0], groups[1]
-            elif groups[1].isdigit() or (len(groups[1]) <= 3 and groups[1].rstrip('%').isdigit()):
-                item, pct = groups[0], groups[1]
+            if order == "pct_first":
+                _add(match.group(2), match.group(1))
             else:
-                continue
-
-            item = item.strip().rstrip(".,;:–—-*").strip()
-            pct = pct.rstrip("%")
-
-            if not item or len(item) < 3:
-                continue
-
-            key = item.lower()
-            if key not in seen:
-                seen.add(key)
-                discounts.append({
-                    "item": item,
-                    "discount": f"{pct}%",
-                    "category": _guess_category(item),
-                })
+                _add(match.group(1), match.group(2))
 
     return discounts
 
@@ -325,53 +400,78 @@ def parse_reddit_bonuses(text):
     bonuses = []
     seen = set()
 
-    patterns = [
-        # "2X GTA$ & RP on Counterfeit Cash"
-        re.compile(
-            r"(\d)[Xx]\s+(?:GTA\$?\s*(?:and|&)\s*RP|Rewards?|GTA\$?|RP)"
-            r"\s+(?:on|in|from|for)\s+(.+?)(?:\s*[\|,\n]|$)",
-            re.IGNORECASE,
-        ),
-        # "Double/Triple on Counterfeit Cash"
-        re.compile(
-            r"(Double|Triple|Quadruple)\s+(?:GTA\$?\s*(?:and|&)\s*RP|Rewards?|payouts?)"
-            r"\s+(?:on|in|from|for)\s+(.+?)(?:\s*[\|,\n]|$)",
-            re.IGNORECASE,
-        ),
-        # "2X on Counterfeit Cash"
-        re.compile(
-            r"(\d)[Xx]\s+(?:on|in|from)\s+(.+?)(?:\s*[\|,\n]|$)",
-            re.IGNORECASE,
-        ),
-        # "- Counterfeit Cash (2X)" or "Counterfeit Cash — Double"
-        re.compile(
-            r"[-•*]\s*(.+?)\s*(?:\(|[–—\-]+\s*)(\d[Xx]|Double|Triple)",
-            re.IGNORECASE,
-        ),
-    ]
-
     mult_map = {"double": "2X", "triple": "3X", "quadruple": "4X"}
 
-    for pattern in patterns:
+    def _add(mult, activity):
+        # Normalise multiplier
+        mult_lower = mult.lower().strip()
+        if mult_lower in mult_map:
+            mult = mult_map[mult_lower]
+        elif mult_lower[0].isdigit():
+            mult = mult_lower[0] + "X"
+
+        activity = activity.strip().rstrip(".,;:–—-*()").strip()
+        # Strip leading bullets/whitespace
+        activity = re.sub(r"^[-•*>\s]+", "", activity).strip()
+        # Strip "GTA$ & RP on " prefix if the pattern over-captured
+        activity = re.sub(
+            r"^GTA\$?\s*(?:and|&)\s*RP\s+(?:on|in|from|for)\s+",
+            "", activity, flags=re.IGNORECASE,
+        ).strip()
+        # Strip parenthetical membership notes but keep the activity name
+        activity = re.sub(r"\s*\(\d+[Xx]\s+for\s+GTA\+.*$", "", activity).strip()
+        if not activity or len(activity) < 3:
+            return
+        # Skip if the "activity" starts with another multiplier (double-match)
+        if re.match(r"^\d[Xx]\s+", activity):
+            return
+
+        key = activity.lower()
+        if key not in seen:
+            seen.add(key)
+            bonuses.append(f"{mult} on {activity}")
+
+    patterns = [
+        # "2X GTA$ & RP on Counterfeit Cash"
+        (re.compile(
+            r"(\d)[Xx]\s+(?:GTA\$?\s*(?:and|&)\s*RP|Rewards?|GTA\$?|RP)"
+            r"\s+(?:on|in|from|for)\s+(.+?)(?:\s*[\|,\n]|$)",
+            re.IGNORECASE | re.MULTILINE,
+        ), "mult_first"),
+        # "Double/Triple Rewards on Counterfeit Cash"
+        (re.compile(
+            r"(Double|Triple|Quadruple)\s+(?:GTA\$?\s*(?:and|&)\s*RP|Rewards?|payouts?)"
+            r"\s+(?:on|in|from|for)\s+(.+?)(?:\s*[\|,\n]|$)",
+            re.IGNORECASE | re.MULTILINE,
+        ), "mult_first"),
+        # "2X on Counterfeit Cash"
+        (re.compile(
+            r"(\d)[Xx]\s+(?:on|in|from)\s+(.+?)(?:\s*[\|,\n]|$)",
+            re.IGNORECASE | re.MULTILINE,
+        ), "mult_first"),
+        # "3x Lunar New Year Stunt Races" (no preposition)
+        (re.compile(
+            r"(\d)[Xx]\s+([A-Z][^,\n]{3,}?)(?:\s*[\|,\n(]|$)",
+            re.MULTILINE,
+        ), "mult_first"),
+        # "Double on Counterfeit Cash"
+        (re.compile(
+            r"(Double|Triple|Quadruple)\s+(?:on|in|from|for)\s+(.+?)(?:\s*[\|,\n]|$)",
+            re.IGNORECASE | re.MULTILINE,
+        ), "mult_first"),
+        # "Counterfeit Cash (2X)" or "Counterfeit Cash — 2X"
+        (re.compile(
+            r"[-•*>]?\s*(.+?)\s*(?:\(|[–—\-]+\s*)(\d[Xx]|Double|Triple)\)?",
+            re.IGNORECASE,
+        ), "activity_first"),
+    ]
+
+    for pattern, order in patterns:
         for match in pattern.finditer(text):
-            groups = match.groups()
-            mult, activity = groups[0], groups[1]
-
-            # Normalise multiplier
-            mult_lower = mult.lower().strip()
-            if mult_lower in mult_map:
-                mult = mult_map[mult_lower]
-            elif mult_lower[0].isdigit():
-                mult = mult_lower[0] + "X"
-
-            activity = activity.strip().rstrip(".,;:–—-*()").strip()
-            if not activity or len(activity) < 3:
-                continue
-
-            key = activity.lower()
-            if key not in seen:
-                seen.add(key)
-                bonuses.append(f"{mult} on {activity}")
+            if order == "mult_first":
+                _add(match.group(1), match.group(2))
+            else:
+                _add(match.group(2), match.group(1))
 
     return bonuses
 
@@ -379,51 +479,53 @@ def parse_reddit_bonuses(text):
 def parse_reddit_podium(text):
     """Extract the podium/prize ride vehicle from Reddit post text.
 
+    After markdown stripping, lines look like:
+        Podium Vehicle: Karin Sultan RS Classic
+        Prize Ride: Grotti Stinger GT
+        Prize Ride Challenge: Place Top 4 in the LS Car Meet Series
+
     Returns:
-        Dict with 'podium_vehicle' and 'prize_ride' keys (str or None).
+        Dict with 'podium_vehicle', 'prize_ride', and 'test_track' keys.
     """
-    result = {"podium_vehicle": None, "prize_ride": None}
+    result = {"podium_vehicle": None, "prize_ride": None, "test_track": None}
 
-    podium_patterns = [
-        re.compile(r"Podium\s+Vehicle[:\s–—\-]+(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-        re.compile(r"Lucky\s+Wheel[:\s–—\-]+(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-        re.compile(r"Podium\s+(?:Car|Vehicle)\s*:\s*(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-        re.compile(r"[-•*]\s*(?:\*\*)?Podium(?:\s+Vehicle)?(?:\*\*)?[:\s–—\-]+(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-    ]
+    # Work line-by-line for reliable extraction
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
 
-    prize_patterns = [
-        re.compile(r"Prize\s+Ride[:\s–—\-]+(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-        re.compile(r"Prize\s+Ride\s+(?:Vehicle|Car)[:\s–—\-]+(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-        re.compile(r"[-•*]\s*(?:\*\*)?Prize\s+Ride(?:\*\*)?[:\s–—\-]+(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-    ]
+        line_lower = line.lower()
 
-    test_track_patterns = [
-        re.compile(r"Test\s+Track[:\s–—\-]+(.+?)(?:\s*[\|,\n]|$)", re.IGNORECASE),
-    ]
+        # Podium Vehicle / Lucky Wheel
+        if result["podium_vehicle"] is None:
+            for trigger in ["podium vehicle:", "lucky wheel:"]:
+                if trigger in line_lower:
+                    # Extract everything after the trigger
+                    idx = line_lower.index(trigger) + len(trigger)
+                    vehicle = line[idx:].strip().rstrip(".,;:–—-*").strip()
+                    if vehicle and len(vehicle) > 2:
+                        result["podium_vehicle"] = vehicle
+                    break
 
-    for pattern in podium_patterns:
-        match = pattern.search(text)
-        if match:
-            vehicle = match.group(1).strip().rstrip(".,;:–—-*").strip()
-            if vehicle and len(vehicle) > 2:
-                result["podium_vehicle"] = vehicle
-                break
+        # Prize Ride (but not "Prize Ride Challenge")
+        if result["prize_ride"] is None:
+            # Match "Prize Ride:" but NOT "Prize Ride Challenge:"
+            pr_match = re.search(
+                r"Prize\s+Ride\s*:\s*(.+?)$", line, re.IGNORECASE
+            )
+            if pr_match:
+                vehicle = pr_match.group(1).strip().rstrip(".,;:–—-*").strip()
+                if vehicle and len(vehicle) > 2:
+                    result["prize_ride"] = vehicle
 
-    for pattern in prize_patterns:
-        match = pattern.search(text)
-        if match:
-            vehicle = match.group(1).strip().rstrip(".,;:–—-*").strip()
-            if vehicle and len(vehicle) > 2:
-                result["prize_ride"] = vehicle
-                break
-
-    for pattern in test_track_patterns:
-        match = pattern.search(text)
-        if match:
-            vehicle = match.group(1).strip().rstrip(".,;:–—-*").strip()
-            if vehicle and len(vehicle) > 2:
-                result["test_track"] = vehicle
-                break
+        # Test Track
+        if result["test_track"] is None:
+            if "test track:" in line_lower:
+                idx = line_lower.index("test track:") + len("test track:")
+                vehicle = line[idx:].strip().rstrip(".,;:–—-*").strip()
+                if vehicle and len(vehicle) > 2:
+                    result["test_track"] = vehicle
 
     return result
 
@@ -469,8 +571,11 @@ def parse_reddit_post(post):
         Dict with keys: discounts, bonuses, podium_vehicle, prize_ride,
         test_track, raw_text, source_url.
     """
-    text = post["selftext"]
+    raw_text = post["selftext"]
     title = post.get("title", "")
+
+    # Strip markdown formatting so regex patterns match clean text
+    text = _strip_markdown(raw_text)
 
     # Parse from the full text (including title for context)
     full_text = title + "\n\n" + text
@@ -503,7 +608,7 @@ def parse_reddit_post(post):
         "podium_vehicle": vehicles.get("podium_vehicle"),
         "prize_ride": vehicles.get("prize_ride"),
         "test_track": vehicles.get("test_track"),
-        "raw_text": text,
+        "raw_text": raw_text,
         "source_url": post.get("url", ""),
         "source": "reddit",
     }
@@ -598,11 +703,13 @@ def test_reddit_scraper():
     for d in result["discounts"]:
         print(f"    - {d['discount']} off {d['item']} [{d['category']}]")
 
-    # Step 4: Show raw text preview
-    print(f"\n[Step 4] Raw post text preview ({len(result['raw_text'])} chars):")
-    preview = result["raw_text"][:500]
-    for line in preview.splitlines()[:15]:
-        print(f"  | {line}")
+    # Step 4: Show cleaned text preview
+    cleaned = _strip_markdown(best["selftext"])
+    print(f"\n[Step 4] Cleaned text preview ({len(cleaned)} chars):")
+    for line in cleaned.splitlines()[:30]:
+        line = line.strip()
+        if line:
+            print(f"  | {line}")
 
     print("\n" + "=" * 60)
     print("  Reddit scraper test complete.")
