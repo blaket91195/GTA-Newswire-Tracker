@@ -3,6 +3,9 @@
 # Rockstar Newswire URLs
 NEWSWIRE_BASE_URL = "https://www.rockstargames.com/newswire"
 
+# Tag IDs for filtering newswire articles
+TAG_GTA_ONLINE = 702
+
 # Request settings
 REQUEST_TIMEOUT = 30  # seconds
 
