@@ -127,6 +127,7 @@ def main():
     subparsers.add_parser("test", help="Run scraper integration test")
     subparsers.add_parser("test-parser", help="Run parser integration test")
     subparsers.add_parser("test-reddit", help="Run Reddit scraper test")
+    subparsers.add_parser("dump", help="Dump cleaned Reddit post text for debugging")
 
     # wishlist commands
     wish_parser = subparsers.add_parser("wishlist", help="Manage your wishlist")
@@ -168,6 +169,24 @@ def main():
     elif args.command == "test-reddit":
         success = test_reddit_scraper()
         sys.exit(0 if success else 1)
+    elif args.command == "dump":
+        from src.reddit_scraper import get_latest_weekly_post, _strip_markdown
+        import logging
+        logging.basicConfig(level=logging.WARNING)
+        post = get_latest_weekly_post()
+        if post:
+            cleaned = _strip_markdown(post["selftext"])
+            print("=== CLEANED TEXT (all lines) ===")
+            for i, line in enumerate(cleaned.splitlines(), 1):
+                print(f"{i:3d} | {line}")
+            print(f"\n=== SECTIONS ===")
+            from src.reddit_scraper import _split_sections
+            for hdr, body in _split_sections(cleaned):
+                print(f"\n--- [{hdr or '(no header)'}] ---")
+                for bline in body.splitlines()[:10]:
+                    print(f"  {bline}")
+        else:
+            print("No post found")
     elif args.command == "wishlist":
         if args.wishlist_command == "add":
             cmd_wishlist_add(args)
