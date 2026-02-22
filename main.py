@@ -9,6 +9,7 @@ Commands:
     test         Run scraper integration test
     test-parser  Run parser integration test
     wishlist     Manage wishlist (add/remove/list)
+    price        Look up or manage the price database
 """
 
 import argparse
@@ -22,6 +23,10 @@ from src.wishlist import (
     load_wishlist, match_discounts,
 )
 from src.digest import format_digest, print_digest, save_digest
+from src.prices import (
+    load_prices, get_item_price, add_item_price,
+    update_item_price, search_items, format_price_info,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +169,60 @@ def cmd_wishlist_list(args):
     list_wishlist()
 
 
+def cmd_price_lookup(args):
+    """Look up an item's price."""
+    result = get_item_price(args.name)
+    if result:
+        print(format_price_info(result))
+    else:
+        print(f"'{args.name}' not found in price database.")
+
+
+def cmd_price_search(args):
+    """Search for items in the price database."""
+    results = search_items(args.query)
+    if not results:
+        print(f"No items matching '{args.query}'.")
+        return
+    print(f"\nFound {len(results)} result(s):\n")
+    for item in results:
+        print(format_price_info(item))
+        print()
+
+
+def cmd_price_add(args):
+    """Add an item to the price database."""
+    kwargs = {}
+    if args.trade_price is not None:
+        kwargs["trade_price"] = args.trade_price
+    if args.max_price is not None:
+        kwargs["max_price"] = args.max_price
+    if args.type is not None:
+        kwargs["type"] = args.type
+    if args.notes is not None:
+        kwargs["notes"] = args.notes
+    add_item_price(args.category, args.name, args.base_price, **kwargs)
+
+
+def cmd_price_update(args):
+    """Update an item in the price database."""
+    kwargs = {}
+    if args.base_price is not None:
+        kwargs["base_price"] = args.base_price
+    if args.trade_price is not None:
+        kwargs["trade_price"] = args.trade_price
+    if args.max_price is not None:
+        kwargs["max_price"] = args.max_price
+    if args.type is not None:
+        kwargs["type"] = args.type
+    if args.notes is not None:
+        kwargs["notes"] = args.notes
+    if not kwargs:
+        print("No fields to update. Use --base-price, --trade-price, --notes, etc.")
+        return
+    update_item_price(args.name, **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # CLI structure
 # ---------------------------------------------------------------------------
@@ -258,6 +317,48 @@ def main():
     list_p = wish_sub.add_parser("list", help="List all wishlist items")
     list_p.set_defaults(func=cmd_wishlist_list)
 
+    # price
+    price_parser = subparsers.add_parser(
+        "price", help="Look up or manage the price database",
+    )
+    price_sub = price_parser.add_subparsers(dest="price_command")
+
+    # price lookup
+    plook = price_sub.add_parser("lookup", help="Look up an item's price")
+    plook.add_argument("name", help="Item name to look up")
+    plook.set_defaults(func=cmd_price_lookup)
+
+    # price search
+    psearch = price_sub.add_parser("search", help="Search for items by name")
+    psearch.add_argument("query", help="Search query")
+    psearch.set_defaults(func=cmd_price_search)
+
+    # price add
+    padd = price_sub.add_parser("add", help="Add an item to the price database")
+    padd.add_argument("name", help="Item name")
+    padd.add_argument("base_price", type=int, help="Base price in GTA$")
+    padd.add_argument(
+        "-c", "--category",
+        default="vehicles",
+        choices=["vehicles", "properties", "heists"],
+        help="Category (default: vehicles)",
+    )
+    padd.add_argument("--trade-price", type=int, default=None, help="Trade price")
+    padd.add_argument("--max-price", type=int, default=None, help="Max price (properties)")
+    padd.add_argument("--type", default=None, help="Item type (e.g. helicopter, business)")
+    padd.add_argument("--notes", default=None, help="Additional notes")
+    padd.set_defaults(func=cmd_price_add)
+
+    # price update
+    pupd = price_sub.add_parser("update", help="Update an item's price info")
+    pupd.add_argument("name", help="Item name to update")
+    pupd.add_argument("--base-price", type=int, default=None, help="New base price")
+    pupd.add_argument("--trade-price", type=int, default=None, help="New trade price")
+    pupd.add_argument("--max-price", type=int, default=None, help="New max price")
+    pupd.add_argument("--type", default=None, help="New item type")
+    pupd.add_argument("--notes", default=None, help="New notes")
+    pupd.set_defaults(func=cmd_price_update)
+
     # --- Dispatch ---
     args = parser.parse_args()
 
@@ -265,6 +366,8 @@ def main():
         args.func(args)
     elif args.command == "wishlist":
         wish_parser.print_help()
+    elif args.command == "price":
+        price_parser.print_help()
     else:
         parser.print_help()
 

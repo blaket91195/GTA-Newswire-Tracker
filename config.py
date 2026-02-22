@@ -11,6 +11,7 @@ REQUEST_TIMEOUT = 30  # seconds
 
 # Data paths
 WISHLIST_FILE = "data/wishlist.json"
+PRICES_FILE = "data/prices.json"
 
 # Debug: save raw API JSON responses to data/cache/
 DEBUG_CACHE = False

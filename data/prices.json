@@ -1,0 +1,112 @@
+{
+  "vehicles": {
+    "Oppressor Mk II": {
+      "base_price": 3890250,
+      "trade_price": 2925000,
+      "category": "vehicle",
+      "type": "motorcycle",
+      "notes": "Requires Terrorbyte with Specialized Workshop"
+    },
+    "Sparrow Helicopter": {
+      "base_price": 1815000,
+      "trade_price": 1365000,
+      "category": "vehicle",
+      "type": "helicopter",
+      "notes": "Stored in Kosatka; best for Cayo Perico prep"
+    },
+    "Buzzard Attack Chopper": {
+      "base_price": 1750000,
+      "category": "vehicle",
+      "type": "helicopter",
+      "notes": "Available as CEO vehicle for free after purchase"
+    },
+    "Kosatka": {
+      "base_price": 2200000,
+      "category": "vehicle",
+      "type": "submarine",
+      "notes": "Required for Cayo Perico Heist"
+    },
+    "Terrorbyte": {
+      "base_price": 1375000,
+      "trade_price": 1275000,
+      "category": "vehicle",
+      "type": "truck",
+      "notes": "Requires Nightclub; needed for Oppressor Mk II upgrades"
+    }
+  },
+  "properties": {
+    "Nightclub": {
+      "base_price": 1080000,
+      "max_price": 1700000,
+      "category": "property",
+      "type": "business",
+      "notes": "Prices vary by location; generates passive income"
+    },
+    "Arcade": {
+      "base_price": 1235000,
+      "max_price": 2530000,
+      "category": "property",
+      "type": "business",
+      "notes": "Required for Diamond Casino Heist; prices vary by location"
+    },
+    "Agency": {
+      "base_price": 2008000,
+      "max_price": 2830000,
+      "category": "property",
+      "type": "business",
+      "notes": "Required for Security Contracts and The Contract DLC"
+    },
+    "Bunker": {
+      "base_price": 1165000,
+      "max_price": 2375000,
+      "category": "property",
+      "type": "business",
+      "notes": "Gunrunning business; prices vary by location"
+    },
+    "Vehicle Warehouse": {
+      "base_price": 1500000,
+      "max_price": 2740000,
+      "category": "property",
+      "type": "warehouse",
+      "notes": "Requires CEO Office; for Import/Export vehicle sourcing"
+    },
+    "Special Cargo Warehouse": {
+      "base_price": 250000,
+      "max_price": 3500000,
+      "category": "property",
+      "type": "warehouse",
+      "notes": "Requires CEO Office; small to large sizes available"
+    },
+    "Auto Shop": {
+      "base_price": 1670000,
+      "max_price": 1920000,
+      "category": "property",
+      "type": "business",
+      "notes": "Required for LS Tuners Contract missions"
+    },
+    "Acid Lab": {
+      "base_price": 750000,
+      "category": "property",
+      "type": "business",
+      "notes": "Mobile lab on Brickade 6x6; First Dose missions required"
+    }
+  },
+  "heists": {
+    "Cayo Perico Heist": {
+      "avg_payout": 1500000,
+      "avg_time_minutes": 60,
+      "requirements": [
+        "Kosatka"
+      ],
+      "notes": "Solo-friendly heist"
+    },
+    "Diamond Casino Heist": {
+      "avg_payout": 2000000,
+      "avg_time_minutes": 90,
+      "requirements": [
+        "Arcade"
+      ],
+      "notes": "Requires 2-4 players"
+    }
+  }
+}
