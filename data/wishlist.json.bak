@@ -1,0 +1,11 @@
+{
+  "vehicles": [],
+  "properties": [],
+  "weapons": [
+    {
+      "name": "Military Rifle",
+      "priority": 5
+    }
+  ],
+  "other": []
+}
