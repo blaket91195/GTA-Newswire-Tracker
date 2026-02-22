@@ -294,6 +294,20 @@ def _find_section(sections, keywords):
     return None
 
 
+def _find_all_sections(sections, keywords):
+    """Find ALL sections whose headers match any of the given keywords.
+
+    Returns:
+        Combined body text from all matching sections, or None.
+    """
+    bodies = []
+    for header, body in sections:
+        header_lower = header.lower()
+        if any(kw in header_lower for kw in keywords):
+            bodies.append(body)
+    return "\n\n".join(bodies) if bodies else None
+
+
 def parse_reddit_discounts(text):
     """Extract discount items and percentages from Reddit post text.
 
@@ -342,7 +356,70 @@ def parse_reddit_discounts(text):
                 "category": _guess_category(item),
             })
 
-    patterns = [
+    # ---------------------------------------------------------------
+    # Pass 1: Header + indented sub-items format
+    # Handles the common Reddit weekly post structure:
+    #   40% Off
+    #    Counterfeit Cash Factories
+    #    Counterfeit Cash Factory Upgrades
+    #   30% Off
+    #    Western Company Cargobob (Jetsam)
+    # Also handles "Free" headers (skip those items).
+    # ---------------------------------------------------------------
+    lines = text.splitlines()
+    disc_header_re = re.compile(
+        r"^(\d{1,2})%\s*(?:off|discount)?\s*$",
+        re.IGNORECASE,
+    )
+    # Skip "Free" and "X% off for GTA+ Members" headers
+    skip_header_re = re.compile(
+        r"^(?:Free|(\d{1,2})%\s*off\s+for\s+GTA\+)",
+        re.IGNORECASE,
+    )
+    subitem_re = re.compile(r"^\s+[-•*>]?\s*(.+)$")
+
+    i = 0
+    while i < len(lines):
+        line_stripped = lines[i].strip()
+
+        # Check for skip headers (Free, GTA+ only discounts)
+        if skip_header_re.match(line_stripped):
+            # Skip this header and all its sub-items
+            j = i + 1
+            while j < len(lines):
+                if not lines[j].strip():
+                    j += 1
+                elif subitem_re.match(lines[j]):
+                    j += 1
+                else:
+                    break
+            i = j
+            continue
+
+        hm = disc_header_re.match(line_stripped)
+        if hm:
+            pct = hm.group(1)
+            # Collect sub-items from following lines
+            j = i + 1
+            while j < len(lines):
+                sub_stripped = lines[j].strip()
+                if not sub_stripped:
+                    j += 1
+                    continue
+                sm = subitem_re.match(lines[j])
+                if sm and not disc_header_re.match(sub_stripped):
+                    _add(sm.group(1), pct)
+                    j += 1
+                else:
+                    break
+            i = j
+        else:
+            i += 1
+
+    # ---------------------------------------------------------------
+    # Pass 2: Inline patterns (catch any missed by header parsing)
+    # ---------------------------------------------------------------
+    inline_patterns = [
         # "30% off the Insurgent Pick-Up" / "30% off Insurgent"
         (re.compile(
             r"(\d{1,2})%\s+off\s+(?:the\s+|all\s+)?(.+?)(?:\s*[\|,\n]|$)",
@@ -363,28 +440,13 @@ def parse_reddit_discounts(text):
             r"[-•*>]\s*(\d{1,2})%\s*off[:\s]+(.+?)(?:\s*[\|,\n]|$)",
             re.IGNORECASE | re.MULTILINE,
         ), "pct_first"),
-        # Table format: "| Insurgent Pick-Up | 30% |" or "| Insurgent | $500,000 | 30% |"
+        # Table format: "| Insurgent Pick-Up | 30% |"
         (re.compile(
             r"\|\s*([^|]+?)\s*\|[^|]*?(\d{1,2})%[^|]*\|",
         ), "item_first"),
-        # "Item - $price - 30% Discount" (common Reddit table-like format)
-        (re.compile(
-            r"^[-•*>]?\s*(.+?)\s*-\s*\$[\d,]+\s*-\s*(\d{1,2})%",
-            re.IGNORECASE | re.MULTILINE,
-        ), "item_first"),
-        # "Item ($price / 30% off)" or "Item ($price, 30% off)"
-        (re.compile(
-            r"[-•*>]?\s*(.+?)\s*\(\$[\d,]+\s*[/,]\s*(\d{1,2})%\s*(?:off|discount)?\)",
-            re.IGNORECASE,
-        ), "item_first"),
-        # Line containing "X% Discount" with context: "Counterfeit Cash Factory: 40% Discount"
-        (re.compile(
-            r"^[-•*>]?\s*(.+?)\s*[:–—\-]+\s*(\d{1,2})%\s*Discount",
-            re.IGNORECASE | re.MULTILINE,
-        ), "item_first"),
     ]
 
-    for pattern, order in patterns:
+    for pattern, order in inline_patterns:
         for match in pattern.finditer(text):
             if order == "pct_first":
                 _add(match.group(2), match.group(1))
@@ -455,7 +517,11 @@ def parse_reddit_bonuses(text):
 
     # ---------------------------------------------------------------
     # Pass 1: Header + sub-items format
-    # Lines like "2X GTA$ and RP:" followed by "- Activity" lines
+    # Handles both bulleted and indented (no bullet) sub-items:
+    #   3X GTA$ and RP
+    #    All Lunar New Year Stunt Races
+    #   2X GTA$
+    #    Counterfeit Cash Sell Missions
     # ---------------------------------------------------------------
     lines = text.splitlines()
     header_re = re.compile(
@@ -463,7 +529,8 @@ def parse_reddit_bonuses(text):
         r"(?:[:–—\-]\s*)?$",
         re.IGNORECASE,
     )
-    subitem_re = re.compile(r"^\s*[-•*>]\s+(.+)$")
+    # Match indented lines (with or without bullet chars)
+    subitem_re = re.compile(r"^\s+[-•*>]?\s*(.+)$")
 
     i = 0
     while i < len(lines):
@@ -473,12 +540,15 @@ def parse_reddit_bonuses(text):
             # Collect sub-items from following lines
             j = i + 1
             while j < len(lines):
+                line_stripped = lines[j].strip()
+                if not line_stripped:
+                    j += 1  # skip blank lines
+                    continue
+                # Stop if we hit another header or a non-indented line
                 sm = subitem_re.match(lines[j])
-                if sm:
+                if sm and not header_re.match(line_stripped):
                     _add(mult, sm.group(1))
                     j += 1
-                elif not lines[j].strip():
-                    j += 1  # skip blank lines
                 else:
                     break
             i = j
@@ -602,7 +672,7 @@ def _guess_category(item_name):
     ]
     weapon_hints = [
         "weapon", "gun", "rifle", "pistol", "shotgun", "smg",
-        "sniper", "launcher", "mk ii",
+        "sniper", "launcher",
     ]
 
     if any(h in lower for h in weapon_hints):
@@ -641,8 +711,8 @@ def parse_reddit_post(post):
     # Try section-based parsing first
     sections = _split_sections(text)
 
-    # Look for discount section
-    discount_section = _find_section(sections, [
+    # Look for discount sections (may be multiple: "Discounts", "Gun Van Discounts")
+    discount_section = _find_all_sections(sections, [
         "discount", "sale", "% off", "price",
     ])
     # Look for bonus section
@@ -651,7 +721,7 @@ def parse_reddit_post(post):
         "payout", "reward",
     ])
 
-    # Parse discounts from discount section if found, otherwise full text
+    # Parse discounts from discount sections if found, otherwise full text
     discounts = parse_reddit_discounts(discount_section or full_text)
 
     # Parse bonuses from bonus section if found, otherwise full text
