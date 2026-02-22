@@ -64,7 +64,13 @@ def format_digest(article_info, wishlist_matches=None):
         lines.append("*" * 50)
         lines.append("  WISHLIST ALERT! Items on sale:")
         for item in wishlist_matches:
-            lines.append(f"  >>> {item} <<<")
+            if isinstance(item, dict):
+                stars = "*" * item.get("priority", 3)
+                discount = item.get("discount", "")
+                disc_str = f" - {discount} off" if discount else ""
+                lines.append(f"  >>> [{stars:>5s}] {item['name']}{disc_str} <<<")
+            else:
+                lines.append(f"  >>> {item} <<<")
         lines.append("*" * 50)
 
     lines.append("")

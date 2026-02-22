@@ -10,7 +10,10 @@ import sys
 from src.scraper import fetch_newswire_articles, get_latest_weekly_update, test_scraper
 from src.reddit_scraper import fetch_weekly_update as reddit_fetch, test_reddit_scraper
 from src.parser import parse_full_article, test_parser
-from src.wishlist import add_item, remove_item, list_wishlist, check_discounts
+from src.wishlist import (
+    add_item, remove_item, list_wishlist, check_discounts,
+    load_wishlist, match_discounts,
+)
 from src.digest import print_digest
 
 
@@ -30,8 +33,8 @@ def cmd_check(args):
             print(f"Source: Reddit — {result['title']}")
             print(f"URL: {result['source_url']}")
 
-            discount_items = [d["item"] for d in result.get("discounts", [])]
-            wishlist_matches = check_discounts(discount_items)
+            wishlist = load_wishlist()
+            wishlist_matches = match_discounts(wishlist, result.get("discounts", []))
             print_digest(result, wishlist_matches)
             return
 
@@ -59,8 +62,8 @@ def cmd_check(args):
     else:
         article_info = parsed
 
-    discount_items = [d["item"] for d in article_info.get("discounts", [])]
-    wishlist_matches = check_discounts(discount_items)
+    wishlist = load_wishlist()
+    wishlist_matches = match_discounts(wishlist, article_info.get("discounts", []))
 
     print_digest(article_info, wishlist_matches)
 
@@ -93,12 +96,12 @@ def cmd_test_parser(args):
 
 def cmd_wishlist_add(args):
     """Add an item to the wishlist."""
-    add_item(args.name, args.category)
+    add_item(args.category, args.name, args.priority)
 
 
 def cmd_wishlist_remove(args):
     """Remove an item from the wishlist."""
-    remove_item(args.name, args.category)
+    remove_item(args.category, args.name)
 
 
 def cmd_wishlist_list(args):
@@ -141,6 +144,12 @@ def main():
         default="other",
         choices=["vehicles", "properties", "weapons", "other"],
         help="Wishlist category (default: other)",
+    )
+    add_parser.add_argument(
+        "-p", "--priority",
+        type=int, default=3, choices=range(1, 6),
+        metavar="1-5",
+        help="Priority 1-5 where 5 is highest (default: 3)",
     )
 
     # wishlist remove
