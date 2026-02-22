@@ -318,11 +318,14 @@ def parse_reddit_discounts(text):
     )
 
     def _add(item, pct):
-        item = item.strip().rstrip(".,;:–—-*()").strip()
+        item = item.strip().rstrip(".,;:–—-*").strip()
         # Strip leading bullet chars and whitespace
         item = re.sub(r"^[-•*>\s]+", "", item).strip()
         # Strip trailing price info: "Item - $500,000" → "Item"
         item = re.sub(r"\s*-\s*\$[\d,]+\s*$", "", item).strip()
+        # Strip unbalanced trailing parens only
+        if item.endswith(")") and item.count("(") < item.count(")"):
+            item = item.rstrip(")")
         pct = pct.strip().rstrip("%")
 
         if not item or len(item) < 3 or not pct.isdigit():
@@ -394,6 +397,13 @@ def parse_reddit_discounts(text):
 def parse_reddit_bonuses(text):
     """Extract 2X/3X bonus events from Reddit post text.
 
+    Handles two common formats:
+    1. Inline: "2X GTA$ & RP on Clubhouse Contracts"
+    2. Header + sub-items:
+           2X GTA$ and RP:
+           - Clubhouse Contracts
+           - MC Work and Challenges
+
     Returns:
         List of bonus description strings.
     """
@@ -402,13 +412,22 @@ def parse_reddit_bonuses(text):
 
     mult_map = {"double": "2X", "triple": "3X", "quadruple": "4X"}
 
+    # Reward-type strings that are NOT activity names
+    _reward_junk_re = re.compile(
+        r"^(?:GTA\$?\s*(?:and|&)\s*RP|GTA\$|RP|Rewards?|payouts?)$",
+        re.IGNORECASE,
+    )
+
+    def _normalise_mult(mult):
+        ml = mult.lower().strip()
+        if ml in mult_map:
+            return mult_map[ml]
+        if ml[0].isdigit():
+            return ml[0] + "X"
+        return mult
+
     def _add(mult, activity):
-        # Normalise multiplier
-        mult_lower = mult.lower().strip()
-        if mult_lower in mult_map:
-            mult = mult_map[mult_lower]
-        elif mult_lower[0].isdigit():
-            mult = mult_lower[0] + "X"
+        mult = _normalise_mult(mult)
 
         activity = activity.strip().rstrip(".,;:–—-*()").strip()
         # Strip leading bullets/whitespace
@@ -418,9 +437,12 @@ def parse_reddit_bonuses(text):
             r"^GTA\$?\s*(?:and|&)\s*RP\s+(?:on|in|from|for)\s+",
             "", activity, flags=re.IGNORECASE,
         ).strip()
-        # Strip parenthetical membership notes but keep the activity name
+        # Strip parenthetical membership notes
         activity = re.sub(r"\s*\(\d+[Xx]\s+for\s+GTA\+.*$", "", activity).strip()
         if not activity or len(activity) < 3:
+            return
+        # Skip if activity is just a reward type, not a real activity
+        if _reward_junk_re.match(activity):
             return
         # Skip if the "activity" starts with another multiplier (double-match)
         if re.match(r"^\d[Xx]\s+", activity):
@@ -431,7 +453,42 @@ def parse_reddit_bonuses(text):
             seen.add(key)
             bonuses.append(f"{mult} on {activity}")
 
-    patterns = [
+    # ---------------------------------------------------------------
+    # Pass 1: Header + sub-items format
+    # Lines like "2X GTA$ and RP:" followed by "- Activity" lines
+    # ---------------------------------------------------------------
+    lines = text.splitlines()
+    header_re = re.compile(
+        r"^(\d)[Xx]\s+(?:GTA\$?\s*(?:and|&)\s*RP|Rewards?|GTA\$?|RP)\s*"
+        r"(?:[:–—\-]\s*)?$",
+        re.IGNORECASE,
+    )
+    subitem_re = re.compile(r"^\s*[-•*>]\s+(.+)$")
+
+    i = 0
+    while i < len(lines):
+        hm = header_re.match(lines[i].strip())
+        if hm:
+            mult = hm.group(1)
+            # Collect sub-items from following lines
+            j = i + 1
+            while j < len(lines):
+                sm = subitem_re.match(lines[j])
+                if sm:
+                    _add(mult, sm.group(1))
+                    j += 1
+                elif not lines[j].strip():
+                    j += 1  # skip blank lines
+                else:
+                    break
+            i = j
+        else:
+            i += 1
+
+    # ---------------------------------------------------------------
+    # Pass 2: Inline patterns (only adds items not already seen)
+    # ---------------------------------------------------------------
+    inline_patterns = [
         # "2X GTA$ & RP on Counterfeit Cash"
         (re.compile(
             r"(\d)[Xx]\s+(?:GTA\$?\s*(?:and|&)\s*RP|Rewards?|GTA\$?|RP)"
@@ -466,7 +523,7 @@ def parse_reddit_bonuses(text):
         ), "activity_first"),
     ]
 
-    for pattern, order in patterns:
+    for pattern, order in inline_patterns:
         for match in pattern.finditer(text):
             if order == "mult_first":
                 _add(match.group(1), match.group(2))
@@ -508,11 +565,12 @@ def parse_reddit_podium(text):
                         result["podium_vehicle"] = vehicle
                     break
 
-        # Prize Ride (but not "Prize Ride Challenge")
+        # Prize Ride — match "Prize Ride:", "Prize Ride Vehicle:", etc.
+        # but NOT "Prize Ride Challenge:"
         if result["prize_ride"] is None:
-            # Match "Prize Ride:" but NOT "Prize Ride Challenge:"
             pr_match = re.search(
-                r"Prize\s+Ride\s*:\s*(.+?)$", line, re.IGNORECASE
+                r"Prize\s+Ride(?:\s+Vehicle)?\s*:\s*(.+?)$",
+                line, re.IGNORECASE,
             )
             if pr_match:
                 vehicle = pr_match.group(1).strip().rstrip(".,;:–—-*").strip()
@@ -706,7 +764,7 @@ def test_reddit_scraper():
     # Step 4: Show cleaned text preview
     cleaned = _strip_markdown(best["selftext"])
     print(f"\n[Step 4] Cleaned text preview ({len(cleaned)} chars):")
-    for line in cleaned.splitlines()[:30]:
+    for line in cleaned.splitlines()[:40]:
         line = line.strip()
         if line:
             print(f"  | {line}")
