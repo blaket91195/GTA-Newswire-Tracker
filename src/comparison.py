@@ -125,6 +125,10 @@ def _render_table(headers, rows, fmt="terminal"):
 def generate_comparison_table(items, prices_db=None, format="terminal"):
     """Generate a comparison table for discounted items.
 
+    Items not found in the price database are still included with
+    ``"--"`` placeholders so the user sees everything from the weekly
+    update at a glance.
+
     Args:
         items: List of dicts with ``"item"`` and ``"discount"`` keys.
         prices_db: Optional pre-loaded prices dict.
@@ -144,26 +148,37 @@ def generate_comparison_table(items, prices_db=None, format="terminal"):
         disc_pct = entry.get("discount", 0)
 
         savings = calculate_discount_savings(name, disc_pct, prices_db)
-        if not savings:
-            continue
 
-        # Determine ROI label
-        biz = calculate_business_roi(savings["item"], prices_db)
-        heist = _heist_for_item(savings["item"], prices_db)
-        if heist:
-            roi_label = heist["roi_30_days"]
-        elif biz:
-            roi_label = biz["roi_30_days"]
+        if savings:
+            # Determine ROI label
+            biz = calculate_business_roi(savings["item"], prices_db)
+            heist = _heist_for_item(savings["item"], prices_db)
+            if heist:
+                roi_label = heist["roi_30_days"]
+            elif biz:
+                roi_label = biz["roi_30_days"]
+            else:
+                roi_label = "N/A"
+
+            rows.append([
+                savings["item"],
+                format_currency(savings["base_price"]),
+                f"{int(disc_pct)}%",
+                format_currency(savings["best_price"]),
+                roi_label,
+            ])
         else:
-            roi_label = "N/A (tool)"
+            # Item not in price DB — still show it with placeholders
+            rows.append([
+                name,
+                "--",
+                f"{int(disc_pct)}%",
+                "--",
+                "--",
+            ])
 
-        rows.append([
-            savings["item"],
-            format_currency(savings["base_price"]),
-            f"{int(disc_pct)}%",
-            format_currency(savings["best_price"]),
-            roi_label,
-        ])
+    if not rows:
+        return "No discounts to display."
 
     return _render_table(headers, rows, fmt=format)
 
@@ -279,6 +294,11 @@ def generate_discount_chart(all_discounts, prices_db=None, top_n=10,
                             bar_width=40):
     """Generate an ASCII bar chart of top savings.
 
+    When dollar-amount savings are available (item found in price DB),
+    the chart is sorted by absolute savings.  When no items have known
+    prices, the chart falls back to ranking by discount percentage so
+    that the user still gets a useful visual.
+
     Args:
         all_discounts: List of dicts with ``"item"`` and ``"discount"`` keys.
         prices_db: Optional pre-loaded prices dict.
@@ -291,44 +311,80 @@ def generate_discount_chart(all_discounts, prices_db=None, top_n=10,
     if prices_db is None:
         prices_db = load_prices()
 
-    savings_list = []
-    for entry in all_discounts:
-        name = entry.get("item", "")
-        disc_pct = entry.get("discount", 0)
-
-        result = calculate_discount_savings(name, disc_pct, prices_db)
-        if not result:
-            continue
-
-        savings_list.append({
-            "item": result["item"],
-            "savings": result["savings_vs_base"],
-            "discount_percent": int(disc_pct),
-        })
-
-    # Sort by savings descending, take top N
-    savings_list.sort(key=lambda x: x["savings"], reverse=True)
-    savings_list = savings_list[:top_n]
-
-    if not savings_list:
+    if not all_discounts:
         return "No discount data available."
 
-    max_savings = savings_list[0]["savings"]
-    max_name_len = max(len(s["item"]) for s in savings_list)
-    max_val_len = max(len(format_currency(s["savings"])) for s in savings_list)
+    priced = []
+    unpriced = []
 
-    lines = [f"Top {min(top_n, len(savings_list))} Savings This Week:", ""]
+    for entry in all_discounts:
+        name = entry.get("item", "")
+        disc_pct = int(entry.get("discount", 0))
 
-    for s in savings_list:
-        bar_len = int((s["savings"] / max_savings) * bar_width) if max_savings else 0
-        bar = "\u2588" * bar_len
+        result = calculate_discount_savings(name, disc_pct, prices_db)
+        if result:
+            priced.append({
+                "item": result["item"],
+                "savings": result["savings_vs_base"],
+                "discount_percent": disc_pct,
+            })
+        else:
+            unpriced.append({
+                "item": name,
+                "savings": 0,
+                "discount_percent": disc_pct,
+            })
 
-        name_padded = s["item"].ljust(max_name_len)
-        val_padded = format_currency(s["savings"]).ljust(max_val_len)
-
-        lines.append(
-            f"  {name_padded}  {val_padded} {bar} ({s['discount_percent']}% off)"
+    # Prefer dollar-savings ranking; fall back to discount-% ranking
+    if priced:
+        chart_items = sorted(priced, key=lambda x: x["savings"], reverse=True)
+        # Append unpriced items at the end so they're still visible
+        chart_items.extend(
+            sorted(unpriced, key=lambda x: x["discount_percent"], reverse=True)
         )
+        use_dollars = True
+    else:
+        chart_items = sorted(unpriced, key=lambda x: x["discount_percent"], reverse=True)
+        use_dollars = False
+
+    chart_items = chart_items[:top_n]
+
+    if not chart_items:
+        return "No discount data available."
+
+    max_name_len = max(len(s["item"]) for s in chart_items)
+    count = min(top_n, len(chart_items))
+
+    lines = [f"Top {count} Savings This Week:", ""]
+
+    if use_dollars:
+        max_savings = chart_items[0]["savings"] if chart_items[0]["savings"] else 1
+        max_val_len = max(
+            len(format_currency(s["savings"])) if s["savings"] else 3
+            for s in chart_items
+        )
+        for s in chart_items:
+            name_padded = s["item"].ljust(max_name_len)
+            if s["savings"]:
+                bar_len = int((s["savings"] / max_savings) * bar_width)
+                val_padded = format_currency(s["savings"]).ljust(max_val_len)
+            else:
+                bar_len = 1  # minimal bar for unpriced items
+                val_padded = "--".ljust(max_val_len)
+            bar = "\u2588" * max(bar_len, 0)
+            lines.append(
+                f"  {name_padded}  {val_padded} {bar} ({s['discount_percent']}% off)"
+            )
+    else:
+        # No dollar data — chart by discount percentage
+        max_pct = chart_items[0]["discount_percent"] if chart_items else 1
+        for s in chart_items:
+            bar_len = int((s["discount_percent"] / max_pct) * bar_width) if max_pct else 0
+            bar = "\u2588" * max(bar_len, 1)
+            name_padded = s["item"].ljust(max_name_len)
+            lines.append(
+                f"  {name_padded}  {bar} ({s['discount_percent']}% off)"
+            )
 
     return "\n".join(lines)
 

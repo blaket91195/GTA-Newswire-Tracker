@@ -257,7 +257,7 @@ def cmd_compare(args):
     prices_db = load_prices()
     print(f"Found {len(discounts)} discounts. Generating comparison...\n")
 
-    # Comparison table
+    # Comparison table (shows all items, even those not in price DB)
     table = generate_comparison_table(discounts, prices_db, format=fmt)
     print(table)
 
@@ -266,17 +266,24 @@ def cmd_compare(args):
     chart = generate_discount_chart(discounts, prices_db)
     print(chart)
 
-    # Ranked investments
+    # Ranked investments (only items found in price DB)
     ranked = compare_investments(discounts, prices_db)
     if ranked:
-        print(f"\nRanked by ROI:")
+        print(f"\nRanked by ROI (priced items):")
         print("-" * 40)
         for r in ranked:
             roi = r.get("roi_30_days", "N/A")
-            print(f"  {r['rank']}. {r['item']} — {int(r['discount_percent'])}% off"
-                  f" — ROI: {roi}")
+            print(f"  {r['rank']}. {r['item']} \u2014 {int(r['discount_percent'])}% off"
+                  f" \u2014 ROI: {roi}")
             if r.get("reason"):
                 print(f"     {r['reason']}")
+
+    # Count items not in price DB and show a helpful note
+    known_count = len(ranked) if ranked else 0
+    unknown_count = len(discounts) - known_count
+    if unknown_count > 0:
+        print(f"\n  Note: {unknown_count} item(s) not in price database."
+              f" Use 'python main.py price add' to add them.")
 
     print()
 
@@ -411,6 +418,16 @@ def cmd_check_roi(args):
         print("=" * 50)
         table = generate_comparison_table(normalised, prices_db)
         print(table)
+
+        # Count how many items had price data
+        priced = sum(
+            1 for d in normalised
+            if calculate_discount_savings(d["item"], d["discount"], prices_db)
+        )
+        unpriced = len(normalised) - priced
+        if unpriced:
+            print(f"\n  ({unpriced} item(s) not in price database — "
+                  f"use 'python main.py price add' to add them)")
 
         print()
         chart = generate_discount_chart(normalised, prices_db)
