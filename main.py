@@ -5,6 +5,10 @@ Track GTA Online weekly updates, discounts, events, and check your wishlist.
 
 Commands:
     check        Fetch latest weekly update and display digest
+    check-roi    Enhanced check with ROI analysis
+    roi          Calculate ROI for a discounted item
+    compare      Compare all discounted items from latest update
+    recommend    Get purchase recommendations for a budget
     list         Show recent GTA Online articles
     test         Run scraper integration test
     test-parser  Run parser integration test
@@ -13,6 +17,7 @@ Commands:
 """
 
 import argparse
+import re
 import sys
 
 from src.scraper import fetch_newswire_articles, get_latest_weekly_update, test_scraper
@@ -26,6 +31,19 @@ from src.digest import format_digest, print_digest, save_digest
 from src.prices import (
     load_prices, get_item_price, add_item_price,
     update_item_price, search_items, format_price_info,
+)
+from src.roi_calculator import (
+    calculate_discount_savings,
+    calculate_business_roi,
+    calculate_heist_roi,
+    compare_investments,
+    generate_purchase_recommendation,
+    INCOME_RATES,
+)
+from src.comparison import (
+    format_currency,
+    generate_comparison_table,
+    generate_discount_chart,
 )
 
 
@@ -92,6 +110,345 @@ def cmd_check(args):
     # --- Display ---
     digest_text = format_digest(article_data, wishlist_matches)
     print(digest_text)
+
+    # --- Save ---
+    if do_save:
+        path = save_digest(digest_text)
+        print(f"Digest saved to {path}")
+
+
+def _fetch_latest_discounts(source="reddit"):
+    """Fetch and return (article_data, discounts_list) from the latest update.
+
+    ``discounts_list`` is normalised so each entry has numeric ``discount``
+    (int) and ``item`` (str) keys suitable for the ROI/comparison APIs.
+    """
+    article_data = None
+
+    if source in ("reddit", "auto"):
+        result = reddit_fetch()
+        if result and (result.get("discounts") or result.get("podium_vehicle")):
+            article_data = result
+
+    if article_data is None:
+        weekly = get_latest_weekly_update()
+        if weekly is None:
+            return None, []
+        parsed = parse_full_article(weekly["url"], blurb=weekly.get("blurb", ""))
+        article_data = parsed if parsed else {"discounts": [], "bonuses": [], "podium_vehicle": None}
+
+    raw_discounts = article_data.get("discounts", [])
+    normalised = []
+    for d in raw_discounts:
+        pct_str = str(d.get("discount", "0"))
+        m = re.search(r"(\d+)", pct_str)
+        pct = int(m.group(1)) if m else 0
+        normalised.append({
+            "item": d.get("item", ""),
+            "discount": pct,
+            "category": d.get("category", "other"),
+        })
+    return article_data, normalised
+
+
+def _roi_recommendation_label(roi_str):
+    """Map a 30-day ROI percentage string to a recommendation label."""
+    m = re.search(r"(\d+)", str(roi_str))
+    if not m:
+        return "SITUATIONAL"
+    val = int(m.group(1))
+    if val >= 200:
+        return "STRONG BUY"
+    if val >= 100:
+        return "BUY"
+    if val >= 50:
+        return "GOOD VALUE"
+    return "SITUATIONAL"
+
+
+# ---------------------------------------------------------------------------
+# ROI command
+# ---------------------------------------------------------------------------
+
+
+def cmd_roi(args):
+    """Calculate ROI for a single discounted item."""
+    prices_db = load_prices()
+    item_name = args.item
+    discount = args.discount
+
+    savings = calculate_discount_savings(item_name, discount, prices_db)
+    if not savings:
+        print(f"Item '{item_name}' not found in the price database.")
+        print("Use 'python main.py price search <name>' to check available items.")
+        sys.exit(1)
+
+    name = savings["item"]
+    sale_price = savings["best_price"]
+
+    print(f"\nROI Analysis: {name} ({int(discount)}% off)")
+    print("=" * 40)
+    print(f"  Base Price:        {format_currency(savings['base_price'])}")
+    print(f"  Discount:          {int(discount)}%")
+    print(f"  Sale Price:        {format_currency(sale_price)}")
+    print(f"  Savings:           {format_currency(savings['savings_vs_base'])}")
+
+    # Check heist ROI
+    heist = None
+    for hname, hinfo in prices_db.get("heists", {}).items():
+        for req in hinfo.get("requirements", []):
+            if req.lower() in name.lower() or name.lower() in req.lower():
+                heist = calculate_heist_roi(hname, prices_db=prices_db)
+                break
+        if heist:
+            break
+
+    biz = calculate_business_roi(name, prices_db)
+
+    if heist:
+        payout = heist["avg_payout_per_run"]
+        time_min = heist["avg_time_per_run_minutes"]
+        break_even = round(sale_price / payout, 2) if payout else 0
+        roi_label = heist["roi_30_days"]
+
+        print(f"\n  Income Potential:")
+        print(f"  Avg Heist Payout:  {format_currency(payout)}")
+        print(f"  Avg Time:          {time_min} minutes")
+        print(f"  Break-even:        {break_even} heist runs")
+        print(f"\n  30-Day ROI:        {roi_label}")
+        print(f"  Recommendation:    {_roi_recommendation_label(roi_label)}")
+
+    elif biz:
+        hourly = biz["avg_hourly_profit"]
+        roi_label = biz["roi_30_days"]
+
+        print(f"\n  Income Potential:")
+        print(f"  Income Type:       {biz['income_type'].capitalize()}")
+        print(f"  Avg Hourly Profit: {format_currency(hourly)}")
+        print(f"  Break-even:        {biz['break_even_hours']} hours ({biz['break_even_weeks']} weeks)")
+        print(f"\n  30-Day ROI:        {roi_label}")
+        print(f"  Recommendation:    {_roi_recommendation_label(roi_label)}")
+
+    else:
+        print(f"\n  Income Potential:  N/A (utility/combat item)")
+        print(f"  Recommendation:    SITUATIONAL")
+
+    print("=" * 40)
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Compare command
+# ---------------------------------------------------------------------------
+
+
+def cmd_compare(args):
+    """Fetch latest update and compare all discounted items."""
+    source = getattr(args, "source", "reddit")
+    fmt = getattr(args, "format", "terminal")
+
+    print("Fetching latest weekly update...")
+    article_data, discounts = _fetch_latest_discounts(source)
+
+    if not discounts:
+        print("No discounts found in the latest update.")
+        sys.exit(1)
+
+    prices_db = load_prices()
+    print(f"Found {len(discounts)} discounts. Generating comparison...\n")
+
+    # Comparison table (shows all items, even those not in price DB)
+    table = generate_comparison_table(discounts, prices_db, format=fmt)
+    print(table)
+
+    # Savings chart
+    print()
+    chart = generate_discount_chart(discounts, prices_db)
+    print(chart)
+
+    # Ranked investments (only items found in price DB)
+    ranked = compare_investments(discounts, prices_db)
+    if ranked:
+        print(f"\nRanked by ROI (priced items):")
+        print("-" * 40)
+        for r in ranked:
+            roi = r.get("roi_30_days", "N/A")
+            print(f"  {r['rank']}. {r['item']} \u2014 {int(r['discount_percent'])}% off"
+                  f" \u2014 ROI: {roi}")
+            if r.get("reason"):
+                print(f"     {r['reason']}")
+
+    # Count items not in price DB and show a helpful note
+    known_count = len(ranked) if ranked else 0
+    unknown_count = len(discounts) - known_count
+    if unknown_count > 0:
+        print(f"\n  Note: {unknown_count} item(s) not in price database."
+              f" Use 'python main.py price add' to add them.")
+
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Recommend command
+# ---------------------------------------------------------------------------
+
+
+def cmd_recommend(args):
+    """Get purchase recommendations based on budget and playstyle."""
+    budget = args.budget
+    playstyle = args.playstyle
+    source = getattr(args, "source", "reddit")
+
+    print(f"Fetching latest weekly update...")
+    article_data, discounts = _fetch_latest_discounts(source)
+
+    if not discounts:
+        print("No discounts found in the latest update.")
+        sys.exit(1)
+
+    prices_db = load_prices()
+    rec = generate_purchase_recommendation(discounts, budget, prices_db, playstyle)
+
+    print(f"\nBudget: {format_currency(budget)} | Playstyle: {playstyle.capitalize()}")
+    print("=" * 40)
+
+    if rec["recommendations"]:
+        # Group by priority
+        high = [r for r in rec["recommendations"] if r["priority"] == "HIGH"]
+        medium = [r for r in rec["recommendations"] if r["priority"] == "MEDIUM"]
+        low = [r for r in rec["recommendations"] if r["priority"] == "LOW"]
+
+        idx = 1
+        if high:
+            print(f"\n\U0001f525 HIGH PRIORITY:")
+            for r in high:
+                roi_str = f" — ROI: {r['roi_30_days']}" if r.get("roi_30_days") else ""
+                print(f"  {idx}. {r['item']} ({format_currency(r['discounted_price'])}) - "
+                      f"{r['discount_percent']}% off")
+                print(f"     \u2192 {r['reason']}{roi_str}")
+                idx += 1
+
+        if medium:
+            print(f"\n\U0001f4a1 RECOMMENDED:")
+            for r in medium:
+                roi_str = f" — ROI: {r['roi_30_days']}" if r.get("roi_30_days") else ""
+                print(f"  {idx}. {r['item']} ({format_currency(r['discounted_price'])}) - "
+                      f"{r['discount_percent']}% off")
+                print(f"     \u2192 {r['reason']}{roi_str}")
+                idx += 1
+
+        if low:
+            print(f"\n  ALSO CONSIDER:")
+            for r in low:
+                print(f"  {idx}. {r['item']} ({format_currency(r['discounted_price'])}) - "
+                      f"{r['discount_percent']}% off")
+                print(f"     \u2192 {r['reason']}")
+                idx += 1
+    else:
+        print("\n  No recommendations within budget.")
+
+    print(f"\n  Total:     {format_currency(rec['total_cost'])}")
+    print(f"  Remaining: {format_currency(rec['remaining_budget'])}")
+
+    if rec.get("alternative_options"):
+        print(f"\n  Over Budget:")
+        for alt in rec["alternative_options"]:
+            print(f"    - {alt['item']} ({format_currency(alt['discounted_price'])}) "
+                  f"- {alt['discount_percent']}% off")
+
+    print("=" * 40)
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Check-ROI command (enhanced check)
+# ---------------------------------------------------------------------------
+
+
+def cmd_check_roi(args):
+    """Enhanced 'check' that includes ROI analysis for discounts."""
+    source = getattr(args, "source", "reddit")
+    do_save = getattr(args, "save", False)
+    budget = getattr(args, "budget", None)
+
+    # --- Fetch article (same as cmd_check) ---
+    article_data = None
+
+    if source in ("reddit", "auto"):
+        print("Fetching latest weekly update from r/gtaonline...")
+        result = reddit_fetch()
+        if result and (result.get("discounts") or result.get("podium_vehicle")):
+            print(f"Source: Reddit \u2014 {result['title']}")
+            print(f"URL: {result['source_url']}")
+            article_data = result
+        elif source == "reddit":
+            print("Reddit source had no detailed data, trying Rockstar API...")
+
+    if article_data is None:
+        print("Fetching latest GTA Online newswire...")
+        weekly = get_latest_weekly_update()
+        if weekly is None:
+            print("Could not find a recent weekly update article.")
+            sys.exit(1)
+        print(f"Latest weekly update: {weekly['title']}")
+        parsed = parse_full_article(weekly["url"], blurb=weekly.get("blurb", ""))
+        article_data = parsed if parsed else {"discounts": [], "bonuses": [], "podium_vehicle": None}
+
+    # --- Wishlist matching ---
+    wishlist = load_wishlist()
+    wishlist_matches = match_discounts(wishlist, article_data.get("discounts", []))
+
+    # --- Display base digest ---
+    digest_text = format_digest(article_data, wishlist_matches)
+    print(digest_text)
+
+    # --- ROI analysis ---
+    raw_discounts = article_data.get("discounts", [])
+    if raw_discounts:
+        normalised = []
+        for d in raw_discounts:
+            pct_str = str(d.get("discount", "0"))
+            m = re.search(r"(\d+)", pct_str)
+            pct = int(m.group(1)) if m else 0
+            normalised.append({"item": d.get("item", ""), "discount": pct})
+
+        prices_db = load_prices()
+
+        print("\nROI COMPARISON:")
+        print("=" * 50)
+        table = generate_comparison_table(normalised, prices_db)
+        print(table)
+
+        # Count how many items had price data
+        priced = sum(
+            1 for d in normalised
+            if calculate_discount_savings(d["item"], d["discount"], prices_db)
+        )
+        unpriced = len(normalised) - priced
+        if unpriced:
+            print(f"\n  ({unpriced} item(s) not in price database — "
+                  f"use 'python main.py price add' to add them)")
+
+        print()
+        chart = generate_discount_chart(normalised, prices_db)
+        print(chart)
+
+        # Purchase recommendations if budget provided
+        if budget:
+            rec = generate_purchase_recommendation(
+                normalised, budget, prices_db,
+            )
+            print(f"\n\nPURCHASE RECOMMENDATIONS (Budget: {format_currency(budget)}):")
+            print("-" * 50)
+            for r in rec.get("recommendations", []):
+                roi_str = f" | ROI: {r['roi_30_days']}" if r.get("roi_30_days") else ""
+                print(f"  [{r['priority']}] {r['item']} "
+                      f"({format_currency(r['discounted_price'])}){roi_str}")
+                print(f"       {r['reason']}")
+            print(f"\n  Total: {format_currency(rec['total_cost'])} | "
+                  f"Remaining: {format_currency(rec['remaining_budget'])}")
+
+        print()
 
     # --- Save ---
     if do_save:
@@ -248,6 +605,75 @@ def main():
         help="Save digest to data/digest_YYYY-MM-DD.txt",
     )
     check_parser.set_defaults(func=cmd_check)
+
+    # roi
+    roi_parser = subparsers.add_parser(
+        "roi", help="Calculate ROI for a discounted item",
+    )
+    roi_parser.add_argument(
+        "--item", required=True,
+        help='Item name, e.g. "Kosatka"',
+    )
+    roi_parser.add_argument(
+        "--discount", type=float, required=True,
+        help="Discount percentage, e.g. 30",
+    )
+    roi_parser.set_defaults(func=cmd_roi)
+
+    # compare
+    compare_parser = subparsers.add_parser(
+        "compare", help="Compare all discounted items from latest update",
+    )
+    compare_parser.add_argument(
+        "--source", choices=["reddit", "rockstar", "auto"],
+        default="reddit",
+        help="Data source (default: reddit)",
+    )
+    compare_parser.add_argument(
+        "--format", choices=["terminal", "markdown", "csv"],
+        default="terminal",
+        help="Output format (default: terminal)",
+    )
+    compare_parser.set_defaults(func=cmd_compare)
+
+    # recommend
+    recommend_parser = subparsers.add_parser(
+        "recommend", help="Get purchase recommendations for a budget",
+    )
+    recommend_parser.add_argument(
+        "--budget", type=int, required=True,
+        help="Available GTA$ budget, e.g. 5000000",
+    )
+    recommend_parser.add_argument(
+        "--playstyle", choices=["solo", "crew", "grinder", "casual", "mixed"],
+        default="mixed",
+        help="Playstyle (default: mixed)",
+    )
+    recommend_parser.add_argument(
+        "--source", choices=["reddit", "rockstar", "auto"],
+        default="reddit",
+        help="Data source (default: reddit)",
+    )
+    recommend_parser.set_defaults(func=cmd_recommend)
+
+    # check-roi
+    check_roi_parser = subparsers.add_parser(
+        "check-roi", help="Enhanced weekly check with ROI analysis",
+    )
+    check_roi_parser.add_argument(
+        "--source", choices=["reddit", "rockstar", "auto"],
+        default="reddit",
+        help="Data source (default: reddit)",
+    )
+    check_roi_parser.add_argument(
+        "--budget", type=int, default=None,
+        help="Optional budget for purchase recommendations",
+    )
+    check_roi_parser.add_argument(
+        "--save", action="store_true",
+        help="Save digest to data/digest_YYYY-MM-DD.txt",
+    )
+    check_roi_parser.set_defaults(func=cmd_check_roi)
 
     # list
     list_parser = subparsers.add_parser(

@@ -4,6 +4,14 @@ import os
 import re
 from datetime import datetime
 
+from src.prices import load_prices
+from src.roi_calculator import (
+    calculate_discount_savings,
+    calculate_business_roi,
+    calculate_heist_roi,
+    INCOME_RATES,
+)
+
 
 def _extract_parsed(article_data):
     """Normalise article_data to the flat parsed-content dict.
@@ -157,16 +165,33 @@ def format_digest(article_data, wishlist_matches=None):
     lines.append("DISCOUNTS:")
     discounts = parsed.get("discounts", [])
     if discounts:
+        prices_db = _load_prices_safe()
         sorted_discounts = sorted(
             discounts,
             key=lambda d: _discount_sort_key(d, norm_matches),
         )
+        # Build set of recommended item names (HIGH-priority wishlist matches)
+        rec_names = set()
+        for wm in norm_matches:
+            if wm["priority"] >= 4:
+                rec_names.add(wm["discount_item"].lower())
+
         for disc in sorted_discounts:
             if isinstance(disc, dict):
+                item_name = disc["item"]
+                cat = disc.get("category", "")
+                is_rec = item_name.lower() in rec_names
+                rec_tag = " \u2b50 RECOMMENDED" if is_rec else ""
+
                 lines.append(
-                    f"  - {disc['discount']} off {disc['item']}"
-                    f" [{disc.get('category', '')}]"
+                    f"  - {disc['discount']} off {item_name}"
+                    f" [{cat}]{rec_tag}"
                 )
+
+                # Add ROI annotation if price data is available
+                roi_line = _build_roi_annotation(item_name, disc.get("discount", ""), prices_db)
+                if roi_line:
+                    lines.append(f"    {roi_line}")
             else:
                 lines.append(f"  - {disc}")
     else:
@@ -177,6 +202,83 @@ def format_digest(article_data, wishlist_matches=None):
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _load_prices_safe():
+    """Load price database, returning empty dict on failure."""
+    try:
+        return load_prices()
+    except Exception:
+        return {"vehicles": {}, "properties": {}, "heists": {}}
+
+
+def _build_roi_annotation(item_name, discount_str, prices_db):
+    """Build a one-line ROI annotation string for a discount item.
+
+    Returns a string like:
+        ``"Save: $660,000 | ROI: 447% | Break-even: 1 heist"``
+    or None if the item isn't in the price database.
+    """
+    if not prices_db:
+        return None
+
+    pct_match = re.search(r"(\d+)", str(discount_str))
+    if not pct_match:
+        return None
+    pct = int(pct_match.group(1))
+
+    savings = calculate_discount_savings(item_name, pct, prices_db)
+    if not savings:
+        return None
+
+    parts = [f"Save: ${savings['savings_vs_base']:,}"]
+
+    # Check heist ROI
+    heist = _find_heist_for_digest(savings["item"], prices_db)
+    biz = calculate_business_roi(savings["item"], prices_db)
+
+    if heist:
+        sale_price = savings["best_price"]
+        payout = heist["avg_payout_per_run"]
+        break_even = round(sale_price / payout, 1) if payout else 0
+        parts.append(f"ROI: {heist['roi_30_days']}")
+        be_label = f"{break_even} heist" if break_even <= 1.5 else f"{break_even} heists"
+        parts.append(f"Break-even: {be_label}")
+    elif biz:
+        parts.append(f"ROI: {biz['roi_30_days']}")
+        income_type = biz["income_type"].capitalize()
+        parts.append(f"{income_type} income")
+    else:
+        # Utility item — show what it's best for from notes
+        item_info = _find_item_notes(savings["item"], prices_db)
+        if item_info:
+            parts.append(f"Best for: {item_info}")
+
+    return " | ".join(parts)
+
+
+def _find_heist_for_digest(item_name, prices_db):
+    """Check if item is a heist requirement and return that heist's ROI."""
+    norm = item_name.lower().strip()
+    for hname, hinfo in prices_db.get("heists", {}).items():
+        for req in hinfo.get("requirements", []):
+            if req.lower() in norm or norm in req.lower():
+                return calculate_heist_roi(hname, prices_db=prices_db)
+    return None
+
+
+def _find_item_notes(item_name, prices_db):
+    """Look up item notes from the price database."""
+    norm = item_name.lower().strip()
+    for cat in ("vehicles", "properties"):
+        for name, info in prices_db.get(cat, {}).items():
+            if name.lower() == norm or norm in name.lower():
+                notes = info.get("notes", "")
+                # Return a short version of notes
+                if notes and len(notes) > 40:
+                    return notes[:40].rsplit(" ", 1)[0] + "..."
+                return notes
+    return None
 
 
 def save_digest(digest_text, filename=None):
