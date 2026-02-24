@@ -368,6 +368,7 @@ def lookup_price(item_name):
         return None
 
     prices["source"] = "gta_wiki"
+    prices["wiki_title"] = page_title
     logger.info(
         "Wiki lookup: '%s' → base=$%s, trade=$%s",
         item_name,

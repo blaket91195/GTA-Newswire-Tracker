@@ -276,8 +276,11 @@ def _find_item_notes(item_name, prices_db):
         for name, info in prices_db.get(cat, {}).items():
             if name.lower() == norm or norm in name.lower():
                 notes = info.get("notes", "")
+                # Skip auto-generated notes from wiki lookups
+                if not notes or notes.startswith("Price auto-fetched"):
+                    continue
                 # Return a short version of notes
-                if notes and len(notes) > 40:
+                if len(notes) > 40:
                     return notes[:40].rsplit(" ", 1)[0] + "..."
                 return notes
     return None

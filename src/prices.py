@@ -157,7 +157,8 @@ def get_or_fetch_price(item_name):
         entry["trade_price"] = wiki_result["trade_price"]
     if wiki_result.get("type"):
         entry["type"] = wiki_result["type"]
-    entry["notes"] = "Price auto-fetched from GTA Wiki"
+    wiki_title = wiki_result.get("wiki_title", item_name)
+    entry["notes"] = f"Price auto-fetched from GTA Wiki ({wiki_title})"
 
     # Save to local database for future lookups
     db = load_prices()
