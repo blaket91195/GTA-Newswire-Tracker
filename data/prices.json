@@ -1,11 +1,18 @@
 {
   "vehicles": {
     "Oppressor Mk II": {
-      "base_price": 3890250,
-      "trade_price": 2925000,
+      "base_price": 8000000,
+      "trade_price": 6000000,
       "category": "vehicle",
       "type": "motorcycle",
-      "notes": "Requires Terrorbyte with Specialized Workshop"
+      "notes": "Price increased April 2023; requires Terrorbyte with Specialized Workshop"
+    },
+    "Oppressor Mk I": {
+      "base_price": 3524500,
+      "trade_price": 2650000,
+      "category": "vehicle",
+      "type": "motorcycle",
+      "notes": "Requires Bunker research for missiles; can glide and boost"
     },
     "Sparrow Helicopter": {
       "base_price": 1815000,
@@ -20,27 +27,198 @@
       "type": "helicopter",
       "notes": "Available as CEO vehicle for free after purchase"
     },
+    "Akula": {
+      "base_price": 4500000,
+      "trade_price": 3704050,
+      "category": "vehicle",
+      "type": "helicopter",
+      "notes": "Stealth helicopter; price increased April 2023; requires Hangar"
+    },
+    "FH-1 Hunter": {
+      "base_price": 4123000,
+      "trade_price": 3100000,
+      "category": "vehicle",
+      "type": "helicopter",
+      "notes": "Co-pilot can use explosive cannon; trade price after 42 Air Freight missions"
+    },
+    "Savage": {
+      "base_price": 2593500,
+      "trade_price": 1950000,
+      "category": "vehicle",
+      "type": "helicopter",
+      "notes": "Explosive cannon and homing missiles; requires Hangar or Pegasus"
+    },
+    "Hydra": {
+      "base_price": 3990000,
+      "category": "vehicle",
+      "type": "jet",
+      "notes": "VTOL fighter jet; explosive cannon and homing missiles"
+    },
+    "P-996 LAZER": {
+      "base_price": 6500000,
+      "category": "vehicle",
+      "type": "jet",
+      "notes": "Military fighter jet; explosive cannon; can be stolen free from Fort Zancudo"
+    },
+    "B-11 Strikeforce": {
+      "base_price": 3800000,
+      "category": "vehicle",
+      "type": "jet",
+      "notes": "A-10 Warthog inspired; explosive cannon, bombs, barrage missiles; requires Hangar"
+    },
+    "Deluxo": {
+      "base_price": 5750000,
+      "trade_price": 4721500,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Flying car with homing missiles; price increased April 2023"
+    },
+    "Toreador": {
+      "base_price": 4250000,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Submersible car with unlimited missiles; price increased April 2023"
+    },
+    "Stromberg": {
+      "base_price": 2500000,
+      "trade_price": 1875000,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Submersible car; price reduced April 2023; requires Facility for trade price"
+    },
+    "Scramjet": {
+      "base_price": 4000000,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Boost and jump ability; homing missiles; price increased April 2023"
+    },
+    "Vigilante": {
+      "base_price": 3750000,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Batmobile-inspired; boost ability; homing missiles; counts for heists"
+    },
+    "Armored Kuruma": {
+      "base_price": 698250,
+      "trade_price": 525000,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Bullet-resistant; trade price after completing The Fleeca Job"
+    },
+    "Duke O'Death": {
+      "base_price": 665000,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Armored muscle car; free for returning players"
+    },
+    "Nightshark": {
+      "base_price": 1245000,
+      "category": "vehicle",
+      "type": "car",
+      "notes": "Can survive 27 homing missiles when fully upgraded; best explosive resistance for price"
+    },
+    "Insurgent Pick-Up": {
+      "base_price": 1350000,
+      "category": "vehicle",
+      "type": "truck",
+      "notes": "Mounted turret; can be upgraded to Custom variant in MOC/Avenger"
+    },
+    "Khanjali": {
+      "base_price": 3850350,
+      "trade_price": 2895000,
+      "category": "vehicle",
+      "type": "tank",
+      "notes": "Tank with railgun option; survives 8 RPGs; requires Facility for trade price"
+    },
+    "Mammoth Avenger": {
+      "base_price": 3450000,
+      "category": "vehicle",
+      "type": "aircraft",
+      "notes": "Flying command center; weapon workshop inside; requires Facility; survives 23 missiles"
+    },
+    "Mobile Operations Center": {
+      "base_price": 1225000,
+      "category": "vehicle",
+      "type": "truck",
+      "notes": "Weapon and vehicle workshop; requires Bunker; up to $2,790,000 fully upgraded"
+    },
     "Kosatka": {
       "base_price": 2200000,
       "category": "vehicle",
       "type": "submarine",
-      "notes": "Required for Cayo Perico Heist"
+      "notes": "Required for Cayo Perico Heist; can add Sparrow, guided missiles, sonar"
     },
     "Terrorbyte": {
       "base_price": 1375000,
       "trade_price": 1275000,
       "category": "vehicle",
       "type": "truck",
-      "notes": "Requires Nightclub; needed for Oppressor Mk II upgrades"
+      "notes": "Requires Nightclub; needed for Oppressor Mk II upgrades; client jobs"
     }
   },
   "properties": {
+    "CEO Office": {
+      "base_price": 1000000,
+      "max_price": 4000000,
+      "category": "property",
+      "type": "office",
+      "notes": "Maze Bank West $1M, Arcadius $2.25M, Lombank West $3.1M, Maze Bank Tower $4M"
+    },
+    "Motorcycle Clubhouse": {
+      "base_price": 200000,
+      "max_price": 495000,
+      "category": "property",
+      "type": "clubhouse",
+      "notes": "Required to become MC President and purchase MC Businesses"
+    },
+    "Cocaine Lockup": {
+      "base_price": 975000,
+      "max_price": 1852500,
+      "category": "property",
+      "type": "mc_business",
+      "notes": "Most profitable MC business; $74K/hr fully upgraded; requires MC Clubhouse"
+    },
+    "Methamphetamine Lab": {
+      "base_price": 910000,
+      "max_price": 1729000,
+      "category": "property",
+      "type": "mc_business",
+      "notes": "Second most profitable MC business; requires MC Clubhouse"
+    },
+    "Counterfeit Cash Factory": {
+      "base_price": 845000,
+      "max_price": 1605000,
+      "category": "property",
+      "type": "mc_business",
+      "notes": "Third best MC business; $48K/hr upgraded; requires MC Clubhouse"
+    },
+    "Weed Farm": {
+      "base_price": 715000,
+      "max_price": 1358500,
+      "category": "property",
+      "type": "mc_business",
+      "notes": "Low profit MC business; mainly useful for Nightclub passive income"
+    },
+    "Document Forgery Office": {
+      "base_price": 650000,
+      "max_price": 1235000,
+      "category": "property",
+      "type": "mc_business",
+      "notes": "Least profitable MC business; only useful for Nightclub passive income"
+    },
+    "Bunker": {
+      "base_price": 1165000,
+      "max_price": 2375000,
+      "category": "property",
+      "type": "business",
+      "notes": "Gunrunning business; research unlocks weapon/vehicle upgrades"
+    },
     "Nightclub": {
       "base_price": 1080000,
       "max_price": 1700000,
       "category": "property",
       "type": "business",
-      "notes": "Prices vary by location; generates passive income"
+      "notes": "Generates passive income from linked businesses; warehouse for cargo"
     },
     "Arcade": {
       "base_price": 1235000,
@@ -54,59 +232,145 @@
       "max_price": 2830000,
       "category": "property",
       "type": "business",
-      "notes": "Required for Security Contracts and The Contract DLC"
+      "notes": "Security Contracts, Payphone Hits ($85K each), The Contract DLC missions"
     },
-    "Bunker": {
-      "base_price": 1165000,
-      "max_price": 2375000,
+    "Facility": {
+      "base_price": 1250000,
+      "max_price": 2950000,
       "category": "property",
-      "type": "business",
-      "notes": "Gunrunning business; prices vary by location"
+      "type": "facility",
+      "notes": "Required for Doomsday Heist; 9 locations; stores Avenger; optional Orbital Cannon ($900K)"
+    },
+    "Hangar": {
+      "base_price": 1200000,
+      "max_price": 3250000,
+      "category": "property",
+      "type": "hangar",
+      "notes": "LSIA $1.2M-$1.525M; Fort Zancudo $2.085M-$3.25M (grants base access)"
     },
     "Vehicle Warehouse": {
       "base_price": 1500000,
       "max_price": 2740000,
       "category": "property",
       "type": "warehouse",
-      "notes": "Requires CEO Office; for Import/Export vehicle sourcing"
+      "notes": "Requires CEO Office; Import/Export vehicle sourcing; up to $80K per top-range car"
     },
     "Special Cargo Warehouse": {
       "base_price": 250000,
       "max_price": 3500000,
       "category": "property",
       "type": "warehouse",
-      "notes": "Requires CEO Office; small to large sizes available"
+      "notes": "Requires CEO Office; small ($250K) to large ($3.5M) sizes available"
     },
     "Auto Shop": {
       "base_price": 1670000,
       "max_price": 1920000,
       "category": "property",
       "type": "business",
-      "notes": "Required for LS Tuners Contract missions"
+      "notes": "LS Tuners robbery contracts; Union Depository pays up to $375K"
+    },
+    "Salvage Yard": {
+      "base_price": 1620000,
+      "max_price": 2690000,
+      "category": "property",
+      "type": "business",
+      "notes": "Chop Shop DLC; 5 locations; robbery missions and vehicle salvaging"
     },
     "Acid Lab": {
       "base_price": 750000,
       "category": "property",
       "type": "business",
-      "notes": "Mobile lab on Brickade 6x6; First Dose missions required"
+      "notes": "Mobile lab on Brickade 6x6; First Dose missions required to unlock"
     }
   },
   "heists": {
     "Cayo Perico Heist": {
+      "base_price": 25000,
       "avg_payout": 1500000,
-      "avg_time_minutes": 60,
+      "avg_time_minutes": 15,
       "requirements": [
         "Kosatka"
       ],
-      "notes": "Solo-friendly heist"
+      "notes": "Solo-friendly; Pink Diamond ~$1.4M hard mode; best money per hour"
     },
     "Diamond Casino Heist": {
-      "avg_payout": 2000000,
-      "avg_time_minutes": 90,
+      "base_price": 25000,
+      "avg_payout": 2585000,
+      "avg_time_minutes": 25,
       "requirements": [
         "Arcade"
       ],
-      "notes": "Requires 2-4 players"
+      "notes": "Requires 2-4 players; vault: Cash $2.1M, Art $2.35M, Gold $2.58M (normal)"
+    },
+    "Doomsday Heist - Act 1": {
+      "base_price": 25000,
+      "avg_payout": 812500,
+      "avg_time_minutes": 60,
+      "requirements": [
+        "Facility"
+      ],
+      "notes": "The Data Breaches; 2-4 players; +50% buff from Criminal Enterprises update"
+    },
+    "Doomsday Heist - Act 2": {
+      "base_price": 25000,
+      "avg_payout": 1187500,
+      "avg_time_minutes": 75,
+      "requirements": [
+        "Facility"
+      ],
+      "notes": "The Bogdan Problem; 2-4 players; popular repeat grind; ~$1.8M on hard"
+    },
+    "Doomsday Heist - Act 3": {
+      "base_price": 25000,
+      "avg_payout": 1500000,
+      "avg_time_minutes": 90,
+      "requirements": [
+        "Facility"
+      ],
+      "notes": "The Doomsday Scenario; highest Doomsday payout; very difficult finale"
+    },
+    "The Fleeca Job": {
+      "base_price": 11500,
+      "avg_payout": 143500,
+      "avg_time_minutes": 15,
+      "requirements": [],
+      "notes": "2 players only; easiest heist; unlocks Armored Kuruma trade price"
+    },
+    "The Prison Break": {
+      "base_price": 25000,
+      "avg_payout": 500000,
+      "avg_time_minutes": 45,
+      "requirements": [],
+      "notes": "4 players required; +75% buff from Criminal Enterprises update"
+    },
+    "The Humane Labs Raid": {
+      "base_price": 25000,
+      "avg_payout": 675000,
+      "avg_time_minutes": 50,
+      "requirements": [],
+      "notes": "4 players required; +75% buff from Criminal Enterprises update"
+    },
+    "Series A Funding": {
+      "base_price": 25000,
+      "avg_payout": 505000,
+      "avg_time_minutes": 50,
+      "requirements": [],
+      "notes": "4 players required; drugs collected during setup phase"
+    },
+    "The Pacific Standard Job": {
+      "base_price": 25000,
+      "avg_payout": 1250000,
+      "avg_time_minutes": 60,
+      "requirements": [],
+      "notes": "4 players; highest original heist payout; money lost when carrier takes damage"
+    },
+    "Auto Shop Contracts": {
+      "avg_payout": 300000,
+      "avg_time_minutes": 20,
+      "requirements": [
+        "Auto Shop"
+      ],
+      "notes": "Union Depository pays $300-375K; can be done solo; KDJ/Sessanta take 10% cut"
     }
   }
 }

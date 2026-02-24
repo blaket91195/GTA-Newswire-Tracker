@@ -55,6 +55,26 @@ INCOME_RATES = {
         "type": "passive",
         "notes": "Minimal passive income from arcade machines",
     },
+    "Cocaine Lockup": {
+        "hourly": 74000,
+        "type": "semi-passive",
+        "notes": "Most profitable MC business when fully upgraded",
+    },
+    "Methamphetamine Lab": {
+        "hourly": 51000,
+        "type": "semi-passive",
+        "notes": "Second most profitable MC business when fully upgraded",
+    },
+    "Counterfeit Cash Factory": {
+        "hourly": 48000,
+        "type": "semi-passive",
+        "notes": "Third best MC business when fully upgraded",
+    },
+    "Salvage Yard": {
+        "hourly": 40000,
+        "type": "active",
+        "notes": "Chop Shop robbery missions and vehicle salvaging",
+    },
 }
 
 # Playstyle priorities — ordered lists of recommended items
