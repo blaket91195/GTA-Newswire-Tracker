@@ -6,7 +6,7 @@ and generates purchase recommendations based on budget and playstyle.
 
 import re
 
-from src.prices import get_item_price, load_prices
+from src.prices import get_item_price, get_or_fetch_price, load_prices
 
 
 # ---------------------------------------------------------------------------
@@ -521,7 +521,11 @@ def _norm(name):
 
 
 def _find_in_db(item_name, prices_db):
-    """Find an item in the prices database by fuzzy name match."""
+    """Find an item in the prices database by fuzzy name match.
+
+    Falls back to GTA Wiki lookup if the item isn't in the local DB.
+    Wiki results are automatically cached into prices_db and prices.json.
+    """
     q = _norm(item_name)
     # Pass 1: exact
     for cat in ("vehicles", "properties", "heists"):
@@ -534,7 +538,18 @@ def _find_in_db(item_name, prices_db):
             n = _norm(name)
             if q in n or n in q:
                 return {"name": name, "category_key": cat, **info}
-    return None
+
+    # Pass 3: wiki fallback — fetches from GTA Wiki and caches locally
+    result = get_or_fetch_price(item_name)
+    if result is not None:
+        # Also inject into the in-memory prices_db so subsequent calls
+        # within the same session find it without re-fetching
+        cat = result.get("category_key", "vehicles")
+        name = result.get("name", item_name)
+        entry = {k: v for k, v in result.items()
+                 if k not in ("name", "category_key")}
+        prices_db.setdefault(cat, {})[name] = entry
+    return result
 
 
 def _get_income_rate(item_name):

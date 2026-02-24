@@ -227,6 +227,8 @@ def _build_roi_annotation(item_name, discount_str, prices_db):
         return None
     pct = int(pct_match.group(1))
 
+    # calculate_discount_savings already uses _find_in_db which
+    # falls back to the GTA Wiki lookup, so no extra fetch needed here.
     savings = calculate_discount_savings(item_name, pct, prices_db)
     if not savings:
         return None

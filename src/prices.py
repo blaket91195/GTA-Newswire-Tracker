@@ -1,14 +1,18 @@
 """Vehicle/property price database for GTA Online.
 
 Stores base prices, trade prices, and metadata for vehicles, properties,
-and heists in data/prices.json.
+and heists in data/prices.json.  When a price isn't in the local database,
+the wiki_lookup module can fetch it from the GTA Wiki automatically.
 """
 
 import json
+import logging
 import os
 import re
 
 import config
+
+logger = logging.getLogger(__name__)
 
 VALID_CATEGORIES = ("vehicles", "properties", "heists")
 
@@ -102,6 +106,69 @@ def get_item_price(item_name):
                 return {"name": name, "category_key": cat, **info}
 
     return None
+
+
+def get_or_fetch_price(item_name):
+    """Look up an item's price, falling back to GTA Wiki if not in local DB.
+
+    1. Checks the local prices.json database (fuzzy match).
+    2. If not found, queries the GTA Wiki MediaWiki API for the price.
+    3. If the wiki returns a price, caches it into prices.json for future use.
+
+    Args:
+        item_name: Item name to look up.
+
+    Returns:
+        Dict with price info and canonical name, or None if not found
+        anywhere.  Wiki-sourced results include ``"source": "gta_wiki"``.
+    """
+    # Try local database first
+    local = get_item_price(item_name)
+    if local is not None:
+        return local
+
+    # Fall back to wiki lookup
+    try:
+        from src.wiki_lookup import lookup_price
+    except ImportError:
+        logger.debug("wiki_lookup module not available")
+        return None
+
+    logger.info("Price not in local DB for '%s', trying GTA Wiki...", item_name)
+    wiki_result = lookup_price(item_name)
+    if wiki_result is None:
+        return None
+
+    # Determine category — wiki lookup returns vehicles by default
+    vtype = wiki_result.get("type", "vehicle")
+    if vtype in ("business", "office", "property", "warehouse",
+                 "clubhouse", "facility", "hangar", "mc_business"):
+        category = "properties"
+    else:
+        category = "vehicles"
+
+    # Build the entry and save to local DB
+    entry = {
+        "base_price": wiki_result["base_price"],
+        "category": _cat_label(category),
+        "source": "gta_wiki",
+    }
+    if wiki_result.get("trade_price"):
+        entry["trade_price"] = wiki_result["trade_price"]
+    if wiki_result.get("type"):
+        entry["type"] = wiki_result["type"]
+    entry["notes"] = "Price auto-fetched from GTA Wiki"
+
+    # Save to local database for future lookups
+    db = load_prices()
+    db[category][item_name] = entry
+    _save_prices(db)
+    logger.info(
+        "Cached wiki price for '%s': $%s in %s",
+        item_name, f"{wiki_result['base_price']:,}", category,
+    )
+
+    return {"name": item_name, "category_key": category, **entry}
 
 
 def add_item_price(category, item_name, base_price, **kwargs):
