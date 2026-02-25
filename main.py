@@ -488,6 +488,76 @@ def cmd_test_reddit(args):
     sys.exit(0 if success else 1)
 
 
+def cmd_wiki_test(args):
+    """Test wiki price lookup for a specific item (debug helper)."""
+    import logging
+    logging.basicConfig(level=logging.INFO)
+
+    from src.wiki_lookup import (
+        _search_wiki_page, _fetch_page_wikitext, _extract_prices_from_wikitext,
+        _strip_manufacturer, lookup_price,
+    )
+
+    item = args.item
+    print(f"\n=== Wiki Lookup Debug: '{item}' ===\n")
+
+    stripped = _strip_manufacturer(item)
+    if stripped != item:
+        print(f"  Manufacturer stripped: '{item}' → '{stripped}'")
+    else:
+        print(f"  No manufacturer prefix detected")
+
+    print(f"\n--- Step 1: Search for wiki page ---")
+    page_title = _search_wiki_page(item)
+    print(f"  Page found: {page_title}")
+    if not page_title:
+        print("  FAILED: no wiki page found")
+        return
+
+    print(f"\n--- Step 2: Fetch wikitext ---")
+    wikitext = _fetch_page_wikitext(page_title)
+    if not wikitext:
+        print("  FAILED: could not fetch wikitext")
+        return
+    print(f"  Wikitext length: {len(wikitext)} chars")
+
+    # Show first few lines and any lines with price-related content
+    lines = wikitext.splitlines()
+    print(f"  First 5 lines:")
+    for line in lines[:5]:
+        print(f"    {line[:120]}")
+
+    print(f"\n  Price-related lines:")
+    for i, line in enumerate(lines):
+        lower = line.lower()
+        if any(kw in lower for kw in ["price", "cost", "trade", "$", "gta$",
+                                       "purchase", "bought", "available"]):
+            print(f"    L{i+1}: {line[:150]}")
+
+    print(f"\n--- Step 3: Extract prices ---")
+    prices = _extract_prices_from_wikitext(wikitext)
+    if prices:
+        print(f"  Base price:  ${prices['base_price']:,}")
+        if prices.get("trade_price"):
+            print(f"  Trade price: ${prices['trade_price']:,}")
+        print(f"  Type:        {prices.get('type', 'unknown')}")
+    else:
+        print("  FAILED: no prices extracted from wikitext")
+
+    # Also show what the full lookup_price returns
+    print(f"\n--- Full lookup_price result ---")
+    result = lookup_price(item)
+    if result:
+        for k, v in result.items():
+            if isinstance(v, int):
+                print(f"  {k}: ${v:,}")
+            else:
+                print(f"  {k}: {v}")
+    else:
+        print("  None")
+    print()
+
+
 def cmd_dump(args):
     """Dump cleaned Reddit post text for debugging."""
     from src.reddit_scraper import get_latest_weekly_post, _strip_markdown, _split_sections
@@ -698,6 +768,13 @@ def main():
         "test-reddit", help="Run Reddit scraper test",
     )
     tr_parser.set_defaults(func=cmd_test_reddit)
+
+    # wiki-test (debug)
+    wt_parser = subparsers.add_parser(
+        "wiki-test", help="Debug wiki price lookup for a specific item",
+    )
+    wt_parser.add_argument("item", help='Item name, e.g. "Vapid Slamtruck"')
+    wt_parser.set_defaults(func=cmd_wiki_test)
 
     # dump (debug)
     dump_parser = subparsers.add_parser(

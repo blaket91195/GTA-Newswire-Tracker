@@ -272,12 +272,17 @@ def _search_wiki_page(item_name):
         if result:
             return result
 
-    # Try with common GTA Wiki disambiguation suffixes
-    for candidate in candidates:
-        for suffix in ["(car)", "(vehicle)", "(GTA Online)"]:
-            result = _try_exact_title(f"{candidate} {suffix}")
-            if result:
-                return result
+    # Try with common GTA Wiki disambiguation suffixes.
+    # Only apply to the manufacturer-stripped candidate to reduce API calls.
+    best_candidate = stripped_mfr if stripped_mfr != title_guess else title_guess
+    for suffix in [
+        "(HD Universe)",   # most common for vehicles in multiple game eras
+        "(HD)",            # shorter variant
+        "(GTA Online)",    # online-specific pages
+    ]:
+        result = _try_exact_title(f"{best_candidate} {suffix}")
+        if result:
+            return result
 
     # Fall back to search API — use the shortest (most specific) candidate
     search_name = min(candidates, key=len)
@@ -313,6 +318,9 @@ def _search_wiki_page(item_name):
 def _fetch_page_wikitext(page_title):
     """Fetch the raw wikitext for a wiki page.
 
+    Follows redirects so that e.g. "Jugular" resolves to
+    "Jugular (HD Universe)" transparently.
+
     Returns wikitext string or None.
     """
     data = _wiki_request({
@@ -321,6 +329,7 @@ def _fetch_page_wikitext(page_title):
         "prop": "revisions",
         "rvprop": "content",
         "rvslots": "main",
+        "redirects": "1",           # follow redirects
     })
     if not data:
         return None
@@ -330,10 +339,22 @@ def _fetch_page_wikitext(page_title):
         if pid == "-1" or "missing" in page:
             continue
         revisions = page.get("revisions", [])
-        if revisions:
-            slots = revisions[0].get("slots", {})
-            main = slots.get("main", {})
-            return main.get("*") or main.get("content")
+        if not revisions:
+            continue
+
+        rev = revisions[0]
+
+        # New MediaWiki format (1.32+): slots → main → content
+        slots = rev.get("slots", {})
+        main = slots.get("main", {})
+        content = main.get("*") or main.get("content")
+        if content:
+            return content
+
+        # Old MediaWiki / Fandom format: content directly on revision
+        content = rev.get("*") or rev.get("content")
+        if content:
+            return content
 
     return None
 
@@ -397,6 +418,12 @@ def _extract_prices_from_wikitext(wikitext):
         if amount and base_price is None:
             base_price = amount
 
+    # Pre-clean wikitext for Strategies 2 and 3:
+    # [[$]] → $, {{GTA$}} → $, {{GTAO$}} → $, '''bold''' → content
+    cleaned_wt = re.sub(r"\[\[\$\]\]", "$", wikitext)
+    cleaned_wt = re.sub(r"\{\{\s*(?:GTA|GTAO)?\$\s*\}\}", "$", cleaned_wt)
+    cleaned_wt = re.sub(r"'{2,3}", "", cleaned_wt)
+
     # Strategy 2: If no infobox prices, look for prices in body text.
     # GTA Wiki often puts the price in prose like:
     #   "can be purchased from [[Legendary Motorsport]] for $1,225,000"
@@ -405,10 +432,6 @@ def _extract_prices_from_wikitext(wikitext):
     # Allow up to 120 chars between the verb and the price to accommodate
     # store names in wikilinks.
     if base_price is None:
-        # First, normalise wikitext: strip [[$]] → $, '''bold''' → content
-        cleaned_wt = re.sub(r"\[\[\$\]\]", "$", wikitext)
-        cleaned_wt = re.sub(r"'{2,3}", "", cleaned_wt)
-
         price_context = re.findall(
             r"(?:available|purchase[d]?|bought|costs?|priced?|buy|sold)\b"
             r".{0,120}?"
@@ -419,10 +442,23 @@ def _extract_prices_from_wikitext(wikitext):
             digits = price_str.replace(",", "")
             if digits.isdigit():
                 val = int(digits)
-                # Only accept reasonable GTA Online prices ($10K - $100M)
                 if 10000 <= val <= 100000000:
                     base_price = val
                     break
+
+    # Strategy 3: Last resort — find ANY dollar amount on the page that
+    # looks like a GTA Online vehicle price ($10K–$100M).  Take the highest
+    # value, which is typically the base purchase price.
+    if base_price is None:
+        all_prices = []
+        for m in re.finditer(r"\$([\d,]{5,})", cleaned_wt):
+            digits = m.group(1).replace(",", "")
+            if digits.isdigit():
+                val = int(digits)
+                if 10000 <= val <= 100000000:
+                    all_prices.append(val)
+        if all_prices:
+            base_price = max(all_prices)
 
     if base_price is None:
         return None
