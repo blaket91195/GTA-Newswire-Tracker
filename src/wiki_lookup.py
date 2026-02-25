@@ -397,19 +397,29 @@ def _extract_prices_from_wikitext(wikitext):
         if amount and base_price is None:
             base_price = amount
 
-    # Strategy 2: If no infobox prices, look for prices in body text
-    # Common patterns: "available for $X from Warstock", "costs $X",
-    # "can be purchased for $X"
+    # Strategy 2: If no infobox prices, look for prices in body text.
+    # GTA Wiki often puts the price in prose like:
+    #   "can be purchased from [[Legendary Motorsport]] for $1,225,000"
+    #   "can be purchased from [[Store]] for [[$]]1,225,000"
+    #   "costs $797,000 from [[Southern SA Super Autos]]"
+    # Allow up to 120 chars between the verb and the price to accommodate
+    # store names in wikilinks.
     if base_price is None:
+        # First, normalise wikitext: strip [[$]] → $, '''bold''' → content
+        cleaned_wt = re.sub(r"\[\[\$\]\]", "$", wikitext)
+        cleaned_wt = re.sub(r"'{2,3}", "", cleaned_wt)
+
         price_context = re.findall(
-            r"(?:available|purchase[d]?|bought|costs?|priced?|buy|sold)\s+"
-            r"(?:for|at|from|in GTA Online for)?\s*\$?([\d,]+)",
-            wikitext, re.IGNORECASE,
+            r"(?:available|purchase[d]?|bought|costs?|priced?|buy|sold)\b"
+            r".{0,120}?"
+            r"\$([\d,]+)",
+            cleaned_wt, re.IGNORECASE,
         )
         for price_str in price_context:
             digits = price_str.replace(",", "")
             if digits.isdigit():
                 val = int(digits)
+                # Only accept reasonable GTA Online prices ($10K - $100M)
                 if 10000 <= val <= 100000000:
                     base_price = val
                     break
