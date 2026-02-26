@@ -480,11 +480,98 @@ def _extract_prices_from_wikitext(wikitext):
 # ---------------------------------------------------------------------------
 
 
+def _fetch_parsed_html(page_title):
+    """Fetch the rendered HTML for a wiki page via action=parse.
+
+    This resolves Lua modules/templates that don't appear in raw wikitext,
+    so prices like ``{{#invoke:VehicleData|price}}`` are expanded.
+
+    Returns HTML string or None.
+    """
+    data = _wiki_request({
+        "action": "parse",
+        "page": page_title,
+        "prop": "text",
+        "redirects": "1",
+    })
+    if not data:
+        return None
+
+    return data.get("parse", {}).get("text", {}).get("*")
+
+
+def _extract_prices_from_html(html):
+    """Extract prices from rendered wiki HTML.
+
+    Much simpler than wikitext extraction — just find dollar amounts
+    in the rendered content.
+
+    Returns a dict like ``{"base_price": int}`` or None.
+    """
+    if not html:
+        return None
+
+    # Strip HTML tags to get plain text, collapsing whitespace
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"&nbsp;", " ", text)
+    text = re.sub(r"&#?\w+;", "", text)  # strip remaining HTML entities
+    text = re.sub(r"\s+", " ", text)     # collapse whitespace/newlines
+
+    base_price = None
+    trade_price = None
+
+    # Look for prices near purchase keywords
+    for m in re.finditer(
+        r"(?:purchase[d]?|bought|available|buy|sold|costs?|priced?)\b"
+        r".{0,120}?\$([\d,]+)",
+        text, re.IGNORECASE,
+    ):
+        digits = m.group(1).replace(",", "")
+        if digits.isdigit():
+            val = int(digits)
+            if 10000 <= val <= 100000000:
+                if base_price is None or val > base_price:
+                    base_price = val
+
+    # Look for trade price
+    for m in re.finditer(r"trade\s*price.{0,40}?\$([\d,]+)", text, re.IGNORECASE):
+        digits = m.group(1).replace(",", "")
+        if digits.isdigit():
+            val = int(digits)
+            if 10000 <= val <= 100000000:
+                trade_price = val
+                break
+
+    if base_price is None:
+        return None
+
+    if trade_price and trade_price >= base_price:
+        trade_price = None
+
+    result = {"base_price": base_price, "type": "vehicle"}
+    if trade_price:
+        result["trade_price"] = trade_price
+    return result
+
+
+def _is_disambiguation_page(wikitext):
+    """Check if wikitext is a disambiguation page."""
+    if not wikitext:
+        return False
+    lower = wikitext.lower()
+    return ("{{disambig" in lower or "{{disambiguation" in lower
+            or "may refer to" in lower)
+
+
 def lookup_price(item_name):
     """Look up an item's price from the GTA Wiki.
 
     Searches for the item on gta.fandom.com, fetches its wiki page,
-    and extracts price information from the infobox.
+    and extracts price information from the infobox or rendered HTML.
+
+    Handles disambiguation pages by retrying with common suffixes.
+    Falls back to rendered HTML (action=parse) when raw wikitext has
+    no extractable prices (e.g. Lua module pages).
 
     Args:
         item_name: The item name to look up (e.g. "Paragon R").
@@ -503,11 +590,37 @@ def lookup_price(item_name):
     logger.info("Wiki lookup: found page '%s' for '%s'", page_title, item_name)
 
     wikitext = _fetch_page_wikitext(page_title)
+
+    # --- Handle disambiguation pages ---
+    # If the page is a disambiguation page (e.g. "Jugular" lists multiple
+    # game versions), retry with common suffixes like "(HD Universe)".
+    if _is_disambiguation_page(wikitext):
+        logger.info("Wiki lookup: '%s' is a disambiguation page, trying suffixes",
+                     page_title)
+        base_name = _strip_manufacturer(item_name)
+        for suffix in ["(HD Universe)", "(HD)", "(GTA Online)"]:
+            alt_title = f"{base_name} {suffix}"
+            alt_wikitext = _fetch_page_wikitext(alt_title)
+            if alt_wikitext and not _is_disambiguation_page(alt_wikitext):
+                page_title = alt_title
+                wikitext = alt_wikitext
+                logger.info("Wiki lookup: resolved to '%s'", page_title)
+                break
+
     if not wikitext:
         logger.info("Wiki lookup: could not fetch wikitext for '%s'", page_title)
         return None
 
+    # --- Try extracting from raw wikitext first ---
     prices = _extract_prices_from_wikitext(wikitext)
+
+    # --- Fallback: rendered HTML (resolves Lua/templates) ---
+    if not prices:
+        logger.info("Wiki lookup: raw wikitext had no prices for '%s', "
+                     "trying rendered HTML", page_title)
+        html = _fetch_parsed_html(page_title)
+        prices = _extract_prices_from_html(html)
+
     if not prices:
         logger.info("Wiki lookup: no prices found in '%s'", page_title)
         return None
