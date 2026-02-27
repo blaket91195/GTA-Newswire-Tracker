@@ -30,8 +30,13 @@ _HEADERS = {
 }
 
 # Retry settings
-MAX_RETRIES = 2
+MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2
+
+# Throttle: minimum seconds between wiki API calls to avoid rate limits.
+# Fandom wikis typically allow ~30 requests/minute for anonymous users.
+_MIN_REQUEST_INTERVAL = 0.5
+_last_request_time = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -216,14 +221,26 @@ def _guess_vehicle_type(wikitext):
 def _wiki_request(params, retries=MAX_RETRIES):
     """Make a request to the GTA Wiki MediaWiki API with retry.
 
-    Retries on timeouts, connection errors, and rate-limit (429) or
-    server (5xx) errors.  Returns parsed JSON or None on failure.
+    Retries on timeouts, connection errors, rate-limit (429/JSON-body),
+    and server (5xx) errors.  Throttles requests to avoid hitting the
+    Fandom rate limit (~30 req/min for anonymous users).
+
+    Returns parsed JSON or None on failure.
     """
+    global _last_request_time
+
     params.setdefault("format", "json")
     params.setdefault("origin", "*")
 
     for attempt in range(1, retries + 1):
         try:
+            # Throttle: wait if we've been making requests too fast
+            elapsed = time.time() - _last_request_time
+            if elapsed < _MIN_REQUEST_INTERVAL:
+                time.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+
+            _last_request_time = time.time()
+
             resp = requests.get(
                 WIKI_API_URL,
                 params=params,
@@ -231,7 +248,25 @@ def _wiki_request(params, retries=MAX_RETRIES):
                 timeout=config.REQUEST_TIMEOUT,
             )
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+
+            # Fandom/MediaWiki can return rate-limit errors INSIDE a
+            # 200 OK JSON response: {"error": {"code": "ratelimited"}}
+            if "error" in data:
+                err_code = data["error"].get("code", "")
+                err_info = data["error"].get("info", "")
+                if err_code in ("ratelimited", "maxlag"):
+                    logger.warning(
+                        "Wiki API rate limited in JSON body (attempt %d/%d): %s",
+                        attempt, retries, err_info,
+                    )
+                    # Fall through to retry with longer backoff
+                else:
+                    logger.error("Wiki API error: [%s] %s", err_code, err_info)
+                    return None
+            else:
+                return data
+
         except requests.Timeout:
             logger.warning("Wiki API timeout (attempt %d/%d)", attempt, retries)
         except requests.ConnectionError as exc:
@@ -240,7 +275,6 @@ def _wiki_request(params, retries=MAX_RETRIES):
         except requests.HTTPError as exc:
             status = getattr(exc.response, "status_code", 0)
             if status == 429 or status >= 500:
-                # Rate limited or server error — retry with backoff
                 logger.warning("Wiki API HTTP %d (attempt %d/%d)",
                                status, attempt, retries)
             else:
@@ -256,25 +290,49 @@ def _wiki_request(params, retries=MAX_RETRIES):
     return None
 
 
-def _try_exact_title(title):
-    """Try an exact title lookup.  Returns the page title or None."""
+def _try_titles_batch(titles):
+    """Look up multiple titles in a single API call.
+
+    The MediaWiki API accepts pipe-separated titles, so we can check
+    2-7 titles with ONE request instead of one request each.
+
+    Returns the first *existing* page title (in the order given),
+    or None if none exist.
+    """
+    if not titles:
+        return None
+
+    # MediaWiki accepts pipe-separated titles
     data = _wiki_request({
         "action": "query",
-        "titles": title,
+        "titles": "|".join(titles),
         "prop": "info",
     })
-    if data:
-        pages = data.get("query", {}).get("pages", {})
-        for pid, page in pages.items():
-            if pid != "-1" and "missing" not in page:
-                return page["title"]
+    if not data:
+        return None
+
+    pages = data.get("query", {}).get("pages", {})
+
+    # Build a set of existing titles from the response
+    existing = {}
+    for pid, page in pages.items():
+        if pid != "-1" and "missing" not in page:
+            existing[page["title"].lower()] = page["title"]
+
+    # Return the first match in our priority order
+    for title in titles:
+        found = existing.get(title.lower())
+        if found:
+            return found
+
     return None
 
 
 def _search_wiki_page(item_name):
     """Search for a wiki page matching the item name.
 
-    Tries several title variants, then falls back to search.
+    Tries several title variants (batched into 1-2 API calls),
+    then falls back to the search API.
     Returns the page title or None.
     """
     title_guess = item_name.strip()
@@ -299,25 +357,22 @@ def _search_wiki_page(item_name):
     if stripped_both not in candidates:
         candidates.append(stripped_both)
 
-    # Try each candidate as an exact title
-    for candidate in candidates:
-        result = _try_exact_title(candidate)
-        if result:
-            return result
+    # --- Batch 1: try all base candidates in ONE API call ---
+    result = _try_titles_batch(candidates)
+    if result:
+        return result
 
-    # Try with common GTA Wiki disambiguation suffixes.
-    # Only apply to the manufacturer-stripped candidate to reduce API calls.
+    # --- Batch 2: try disambiguation suffixes in ONE API call ---
     best_candidate = stripped_mfr if stripped_mfr != title_guess else title_guess
-    for suffix in [
-        "(HD Universe)",   # most common for vehicles in multiple game eras
-        "(HD)",            # shorter variant
-        "(GTA Online)",    # online-specific pages
-    ]:
-        result = _try_exact_title(f"{best_candidate} {suffix}")
-        if result:
-            return result
+    suffix_candidates = [
+        f"{best_candidate} {s}"
+        for s in ["(HD Universe)", "(HD)", "(GTA Online)"]
+    ]
+    result = _try_titles_batch(suffix_candidates)
+    if result:
+        return result
 
-    # Fall back to search API — use the shortest (most specific) candidate
+    # --- Fallback: search API (1 call) ---
     search_name = min(candidates, key=len)
     data = _wiki_request({
         "action": "query",
