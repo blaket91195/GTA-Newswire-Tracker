@@ -495,6 +495,7 @@ def cmd_wiki_test(args):
 
     from src.wiki_lookup import (
         _search_wiki_page, _fetch_page_wikitext, _extract_prices_from_wikitext,
+        _fetch_parsed_html, _extract_prices_from_html, _is_disambiguation_page,
         _strip_manufacturer, lookup_price,
     )
 
@@ -520,6 +521,7 @@ def cmd_wiki_test(args):
         print("  FAILED: could not fetch wikitext")
         return
     print(f"  Wikitext length: {len(wikitext)} chars")
+    print(f"  Is disambiguation: {_is_disambiguation_page(wikitext)}")
 
     # Show first few lines and any lines with price-related content
     lines = wikitext.splitlines()
@@ -528,13 +530,18 @@ def cmd_wiki_test(args):
         print(f"    {line[:120]}")
 
     print(f"\n  Price-related lines:")
+    price_lines_found = False
     for i, line in enumerate(lines):
         lower = line.lower()
         if any(kw in lower for kw in ["price", "cost", "trade", "$", "gta$",
-                                       "purchase", "bought", "available"]):
+                                       "purchase", "bought", "available",
+                                       "invoke", "formatnum"]):
             print(f"    L{i+1}: {line[:150]}")
+            price_lines_found = True
+    if not price_lines_found:
+        print("    (none found)")
 
-    print(f"\n--- Step 3: Extract prices ---")
+    print(f"\n--- Step 3: Extract prices from wikitext ---")
     prices = _extract_prices_from_wikitext(wikitext)
     if prices:
         print(f"  Base price:  ${prices['base_price']:,}")
@@ -543,6 +550,34 @@ def cmd_wiki_test(args):
         print(f"  Type:        {prices.get('type', 'unknown')}")
     else:
         print("  FAILED: no prices extracted from wikitext")
+
+    print(f"\n--- Step 4: HTML fallback (action=parse) ---")
+    html = _fetch_parsed_html(page_title)
+    if html:
+        print(f"  HTML length: {len(html)} chars")
+        html_prices = _extract_prices_from_html(html)
+        if html_prices:
+            print(f"  Base price:  ${html_prices['base_price']:,}")
+            if html_prices.get("trade_price"):
+                print(f"  Trade price: ${html_prices['trade_price']:,}")
+        else:
+            print("  FAILED: no prices extracted from HTML")
+            # Show some HTML context around dollar signs
+            import re as _re
+            text = _re.sub(r"<[^>]+>", " ", html)
+            text = _re.sub(r"&nbsp;", " ", text)
+            text = _re.sub(r"\s+", " ", text)
+            dollar_hits = list(_re.finditer(r"\$[\d,]+", text))
+            if dollar_hits:
+                print(f"  Dollar amounts in HTML ({len(dollar_hits)} found):")
+                for m in dollar_hits[:10]:
+                    start = max(0, m.start() - 40)
+                    end = min(len(text), m.end() + 20)
+                    print(f"    ...{text[start:end]}...")
+            else:
+                print("  No dollar amounts found in rendered HTML at all")
+    else:
+        print("  FAILED: could not fetch parsed HTML")
 
     # Also show what the full lookup_price returns
     print(f"\n--- Full lookup_price result ---")
