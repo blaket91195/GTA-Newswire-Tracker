@@ -65,6 +65,12 @@ def cmd_check(args):
     """
     source = getattr(args, "source", "reddit")
     do_save = getattr(args, "save", False)
+    verbose = getattr(args, "verbose", False)
+
+    if verbose:
+        import logging
+        logging.basicConfig(level=logging.INFO,
+                            format="  [%(name)s] %(message)s")
 
     article_data = None
 
@@ -110,6 +116,40 @@ def cmd_check(args):
     # --- Display ---
     digest_text = format_digest(article_data, wishlist_matches)
     print(digest_text)
+
+    # --- Verbose: show which items had no price and why ---
+    if verbose:
+        from src.prices import get_or_fetch_price, get_item_price
+        prices_db = load_prices()
+        discounts = article_data.get("discounts", [])
+        missing = []
+        for disc in discounts:
+            if not isinstance(disc, dict):
+                continue
+            item_name = disc["item"]
+            pct_match = re.search(r"(\d+)", str(disc.get("discount", "")))
+            if not pct_match:
+                continue
+            savings = calculate_discount_savings(item_name, int(pct_match.group(1)), prices_db)
+            if not savings:
+                missing.append(item_name)
+
+        if missing:
+            print("\n--- Verbose: items without prices ---")
+            for name in missing:
+                print(f"\n  '{name}':")
+                local = get_item_price(name)
+                if local:
+                    print(f"    Local DB match: {local.get('name')} "
+                          f"(base_price={local.get('base_price', 'MISSING')})")
+                else:
+                    print(f"    Local DB: no match")
+                    print(f"    Attempting wiki lookup...")
+                    result = get_or_fetch_price(name)
+                    if result:
+                        print(f"    Wiki result: base=${result.get('base_price', '?'):,}")
+                    else:
+                        print(f"    Wiki result: None (lookup failed)")
 
     # --- Save ---
     if do_save:
@@ -708,6 +748,10 @@ def main():
     check_parser.add_argument(
         "--save", action="store_true",
         help="Save digest to data/digest_YYYY-MM-DD.txt",
+    )
+    check_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Show wiki lookup debug info for items without prices",
     )
     check_parser.set_defaults(func=cmd_check)
 
