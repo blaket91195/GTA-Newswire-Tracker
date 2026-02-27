@@ -148,37 +148,63 @@ def _parse_dollar_amount(text):
 # Vehicle type detection
 # ---------------------------------------------------------------------------
 
-_VEHICLE_TYPE_MAP = {
-    "helicopter": "helicopter",
-    "chopper": "helicopter",
-    "heli": "helicopter",
-    "jet": "jet",
-    "plane": "jet",
-    "aircraft": "aircraft",
-    "boat": "boat",
-    "motorcycle": "motorcycle",
-    "bike": "motorcycle",
-    "tank": "tank",
-    "submarine": "submarine",
-    "truck": "truck",
-    "van": "truck",
-    "suv": "car",
-    "sedan": "car",
-    "coupe": "car",
-    "sports": "car",
-    "super": "car",
-    "muscle": "car",
-    "compact": "car",
-    "off-road": "car",
-}
+# Checked in order — GTA vehicle class categories in the infobox are most
+# reliable, so look for "|class = Muscle" etc. first.  Fallback keywords
+# use word-boundary matching to avoid false positives like "gas tank".
+_VEHICLE_CLASS_MAP = [
+    # Infobox vehicle class values (highest priority)
+    ("helicopters", "helicopter"),
+    ("planes", "jet"),
+    ("boats", "boat"),
+    ("motorcycles", "motorcycle"),
+    ("cycles", "motorcycle"),
+    ("military", "military"),
+    # GTA Online vehicle classes
+    ("muscle", "car"),
+    ("sports classics", "car"),
+    ("sports", "car"),
+    ("super", "car"),
+    ("sedans", "car"),
+    ("coupes", "car"),
+    ("compacts", "car"),
+    ("suvs", "car"),
+    ("off-road", "car"),
+    ("tuners", "car"),
+    ("open wheel", "car"),
+    # Keyword fallbacks
+    ("helicopter", "helicopter"),
+    ("chopper", "helicopter"),
+    ("jet", "jet"),
+    ("plane", "jet"),
+    ("aircraft", "aircraft"),
+    ("submarine", "submarine"),
+    ("motorcycle", "motorcycle"),
+    ("pickup truck", "truck"),
+    ("truck", "truck"),
+    ("van", "truck"),
+]
 
 
 def _guess_vehicle_type(wikitext):
-    """Guess the vehicle type from wikitext content."""
+    """Guess the vehicle type from wikitext content.
+
+    Checks infobox ``|class =`` first, then falls back to keyword matching.
+    """
     lower = wikitext.lower()
-    for keyword, vtype in _VEHICLE_TYPE_MAP.items():
+
+    # Best signal: infobox class field, e.g. "|class = Muscle"
+    class_match = re.search(r"\|\s*class\s*=\s*(.+)", lower)
+    class_val = class_match.group(1).strip() if class_match else ""
+
+    for keyword, vtype in _VEHICLE_CLASS_MAP:
+        if keyword in class_val:
+            return vtype
+
+    # Fallback: keyword search in full wikitext
+    for keyword, vtype in _VEHICLE_CLASS_MAP:
         if keyword in lower:
             return vtype
+
     return "vehicle"
 
 
@@ -190,7 +216,8 @@ def _guess_vehicle_type(wikitext):
 def _wiki_request(params, retries=MAX_RETRIES):
     """Make a request to the GTA Wiki MediaWiki API with retry.
 
-    Returns parsed JSON or None on failure.
+    Retries on timeouts, connection errors, and rate-limit (429) or
+    server (5xx) errors.  Returns parsed JSON or None on failure.
     """
     params.setdefault("format", "json")
     params.setdefault("origin", "*")
@@ -211,8 +238,14 @@ def _wiki_request(params, retries=MAX_RETRIES):
             logger.warning("Wiki API connection error (attempt %d/%d): %s",
                            attempt, retries, exc)
         except requests.HTTPError as exc:
-            logger.error("Wiki API HTTP error: %s", exc)
-            return None
+            status = getattr(exc.response, "status_code", 0)
+            if status == 429 or status >= 500:
+                # Rate limited or server error — retry with backoff
+                logger.warning("Wiki API HTTP %d (attempt %d/%d)",
+                               status, attempt, retries)
+            else:
+                logger.error("Wiki API HTTP error: %s", exc)
+                return None
         except ValueError:
             logger.error("Wiki API returned invalid JSON")
             return None
@@ -520,20 +553,7 @@ def _extract_prices_from_html(html):
     base_price = None
     trade_price = None
 
-    # Look for prices near purchase keywords
-    for m in re.finditer(
-        r"(?:purchase[d]?|bought|available|buy|sold|costs?|priced?)\b"
-        r".{0,120}?\$([\d,]+)",
-        text, re.IGNORECASE,
-    ):
-        digits = m.group(1).replace(",", "")
-        if digits.isdigit():
-            val = int(digits)
-            if 10000 <= val <= 100000000:
-                if base_price is None or val > base_price:
-                    base_price = val
-
-    # Look for trade price
+    # Look for trade price FIRST so we can exclude it from base price
     for m in re.finditer(r"trade\s*price.{0,40}?\$([\d,]+)", text, re.IGNORECASE):
         digits = m.group(1).replace(",", "")
         if digits.isdigit():
@@ -541,6 +561,24 @@ def _extract_prices_from_html(html):
             if 10000 <= val <= 100000000:
                 trade_price = val
                 break
+
+    # Look for prices near purchase keywords, skipping trade price matches
+    for m in re.finditer(
+        r"(?:purchase[d]?|bought|available|buy|sold|costs?|priced?)\b"
+        r".{0,120}?\$([\d,]+)",
+        text, re.IGNORECASE,
+    ):
+        # Skip if "trade" appears in the immediate context before the $
+        ctx_start = max(0, m.start())
+        context_before_dollar = text[ctx_start:m.start(1)].lower()
+        if "trade" in context_before_dollar:
+            continue
+        digits = m.group(1).replace(",", "")
+        if digits.isdigit():
+            val = int(digits)
+            if 10000 <= val <= 100000000:
+                if base_price is None or val > base_price:
+                    base_price = val
 
     if base_price is None:
         return None
