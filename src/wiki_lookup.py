@@ -313,6 +313,16 @@ def _try_titles_batch(titles):
 
     pages = data.get("query", {}).get("pages", {})
 
+    # Log raw API response for debugging
+    for pid, page in pages.items():
+        logger.info("  Batch lookup: pid=%s title='%s' missing=%s",
+                     pid, page.get("title", "?"), "missing" in page)
+
+    # Also check if API normalized or redirected any titles
+    normalized = data.get("query", {}).get("normalized", [])
+    for n in normalized:
+        logger.info("  Normalized: '%s' → '%s'", n.get("from", "?"), n.get("to", "?"))
+
     # Build a set of existing titles from the response
     existing = {}
     for pid, page in pages.items():
