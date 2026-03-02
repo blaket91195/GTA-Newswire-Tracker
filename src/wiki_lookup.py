@@ -290,100 +290,63 @@ def _wiki_request(params, retries=MAX_RETRIES):
     return None
 
 
-def _try_titles_batch(titles):
-    """Look up multiple titles in a single API call.
-
-    The MediaWiki API accepts pipe-separated titles, so we can check
-    2-7 titles with ONE request instead of one request each.
-
-    Returns the first *existing* page title (in the order given),
-    or None if none exist.
-    """
-    if not titles:
-        return None
-
-    # MediaWiki accepts pipe-separated titles
+def _try_exact_title(title):
+    """Try an exact title lookup.  Returns the page title or None."""
     data = _wiki_request({
         "action": "query",
-        "titles": "|".join(titles),
+        "titles": title,
         "prop": "info",
     })
-    if not data:
-        return None
-
-    pages = data.get("query", {}).get("pages", {})
-
-    # Log raw API response for debugging
-    for pid, page in pages.items():
-        logger.info("  Batch lookup: pid=%s title='%s' missing=%s",
-                     pid, page.get("title", "?"), "missing" in page)
-
-    # Also check if API normalized or redirected any titles
-    normalized = data.get("query", {}).get("normalized", [])
-    for n in normalized:
-        logger.info("  Normalized: '%s' → '%s'", n.get("from", "?"), n.get("to", "?"))
-
-    # Build a set of existing titles from the response
-    existing = {}
-    for pid, page in pages.items():
-        if pid != "-1" and "missing" not in page:
-            existing[page["title"].lower()] = page["title"]
-
-    # Return the first match in our priority order
-    for title in titles:
-        found = existing.get(title.lower())
-        if found:
-            return found
-
+    if data:
+        pages = data.get("query", {}).get("pages", {})
+        for pid, page in pages.items():
+            if pid != "-1" and "missing" not in page:
+                return page["title"]
     return None
 
 
 def _search_wiki_page(item_name):
     """Search for a wiki page matching the item name.
 
-    Tries several title variants (batched into 1-2 API calls),
-    then falls back to the search API.
+    Tries the most likely title variant first (manufacturer-stripped),
+    then falls back to other variants and the search API.
     Returns the page title or None.
     """
     title_guess = item_name.strip()
 
-    # Build a list of candidate titles to try (in priority order)
-    candidates = [title_guess]
+    # Strip manufacturer prefix — wiki titles almost never include it
+    stripped_mfr = _strip_manufacturer(title_guess)
 
-    # Strip common article prefixes ("The Oppressor" → "Oppressor")
+    # Try the most likely candidate FIRST to minimise API calls
+    # For "Declasse Drift Yosemite" → try "Drift Yosemite" first
+    if stripped_mfr != title_guess:
+        result = _try_exact_title(stripped_mfr)
+        if result:
+            return result
+
+    # Try the full name (e.g. "Precision Rifle" with no manufacturer)
+    result = _try_exact_title(title_guess)
+    if result:
+        return result
+
+    # Strip article prefix ("The Oppressor" → "Oppressor")
     stripped_article = re.sub(
         r"^(?:the|a|an)\s+", "", title_guess, flags=re.IGNORECASE
     ).strip()
-    if stripped_article != title_guess:
-        candidates.append(stripped_article)
+    if stripped_article != title_guess and stripped_article != stripped_mfr:
+        result = _try_exact_title(stripped_article)
+        if result:
+            return result
 
-    # Strip manufacturer prefix ("Pegassi Zentorno" → "Zentorno")
-    stripped_mfr = _strip_manufacturer(title_guess)
-    if stripped_mfr != title_guess:
-        candidates.append(stripped_mfr)
-
-    # Both: strip article prefix then manufacturer
-    stripped_both = _strip_manufacturer(stripped_article)
-    if stripped_both not in candidates:
-        candidates.append(stripped_both)
-
-    # --- Batch 1: try all base candidates in ONE API call ---
-    result = _try_titles_batch(candidates)
-    if result:
-        return result
-
-    # --- Batch 2: try disambiguation suffixes in ONE API call ---
+    # Try common GTA Wiki disambiguation suffixes
     best_candidate = stripped_mfr if stripped_mfr != title_guess else title_guess
-    suffix_candidates = [
-        f"{best_candidate} {s}"
-        for s in ["(HD Universe)", "(HD)", "(GTA Online)"]
-    ]
-    result = _try_titles_batch(suffix_candidates)
-    if result:
-        return result
+    for suffix in ["(HD Universe)", "(HD)", "(GTA Online)"]:
+        result = _try_exact_title(f"{best_candidate} {suffix}")
+        if result:
+            return result
 
-    # --- Fallback: search API (1 call) ---
-    search_name = min(candidates, key=len)
+    # Fall back to search API
+    search_name = stripped_mfr if stripped_mfr != title_guess else title_guess
     data = _wiki_request({
         "action": "query",
         "list": "search",
@@ -397,15 +360,15 @@ def _search_wiki_page(item_name):
     if not results:
         return None
 
-    # Build normalised names for matching (lowercase, no manufacturer)
-    match_names = set()
-    for c in candidates:
-        match_names.add(c.lower())
+    # Build normalised names for matching
+    candidates = {title_guess.lower(), stripped_mfr.lower()}
+    if stripped_article != title_guess:
+        candidates.add(stripped_article.lower())
 
-    # Prefer results whose title closely matches any candidate name
+    # Prefer results whose title closely matches a candidate name
     for result in results:
         title_lower = result["title"].lower()
-        for mn in match_names:
+        for mn in candidates:
             if mn in title_lower or title_lower in mn:
                 return result["title"]
 
