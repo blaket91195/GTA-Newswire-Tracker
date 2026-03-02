@@ -301,7 +301,14 @@ def _try_exact_title(title):
         pages = data.get("query", {}).get("pages", {})
         for pid, page in pages.items():
             if pid != "-1" and "missing" not in page:
+                logger.info("  _try_exact_title('%s') → found (pid=%s)", title, pid)
                 return page["title"]
+        # Page not found — log why
+        for pid, page in pages.items():
+            logger.info("  _try_exact_title('%s') → miss (pid=%s, missing=%s, title='%s')",
+                         title, pid, "missing" in page, page.get("title", "?"))
+    else:
+        logger.info("  _try_exact_title('%s') → API returned None", title)
     return None
 
 
