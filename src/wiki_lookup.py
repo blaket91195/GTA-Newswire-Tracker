@@ -67,11 +67,14 @@ def _strip_manufacturer(name):
     "Mammoth Avenger"  → "Avenger"
     "Oppressor Mk II"  → "Oppressor Mk II"  (no prefix)
     """
-    lower = name.lower().strip()
+    # Normalise Unicode whitespace (e.g. \xa0 non-breaking space from Reddit)
+    # to regular ASCII spaces so manufacturer prefix matching works reliably.
+    name = re.sub(r"\s+", " ", name).strip()
+    lower = name.lower()
     for mfr in sorted(_MANUFACTURERS, key=len, reverse=True):
         if lower.startswith(mfr + " "):
             return name[len(mfr):].strip()
-    return name.strip()
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +322,8 @@ def _search_wiki_page(item_name):
     then falls back to other variants and the search API.
     Returns the page title or None.
     """
-    title_guess = item_name.strip()
+    # Normalise Unicode whitespace (e.g. \xa0 from Reddit) to regular spaces
+    title_guess = re.sub(r"\s+", " ", item_name).strip()
 
     # Strip manufacturer prefix — wiki titles almost never include it
     stripped_mfr = _strip_manufacturer(title_guess)

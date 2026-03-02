@@ -224,7 +224,9 @@ def _strip_markdown(text):
     # Step 4: Strip strikethrough
     text = re.sub(r'~~([^~]*)~~', r'\1', text)
 
-    # Step 5: HTML entities
+    # Step 5: HTML entities and non-breaking spaces
+    text = text.replace('\xa0', ' ')
+    text = text.replace('&nbsp;', ' ')
     text = text.replace('&amp;', '&')
     text = text.replace('&lt;', '<')
     text = text.replace('&gt;', '>')

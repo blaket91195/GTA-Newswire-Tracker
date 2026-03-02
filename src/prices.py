@@ -35,8 +35,10 @@ def _normalize(name):
     """Normalize a name for fuzzy comparison.
 
     Strips manufacturer prefixes, lowercases, removes special chars.
+    Handles Unicode whitespace (e.g. \\xa0 non-breaking space from Reddit).
     """
-    lower = name.lower().strip()
+    # Normalise Unicode whitespace to regular spaces first
+    lower = re.sub(r"\s+", " ", name).strip().lower()
     for mfr in sorted(_MANUFACTURERS, key=len, reverse=True):
         if lower.startswith(mfr + " "):
             lower = lower[len(mfr):].strip()
