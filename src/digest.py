@@ -233,7 +233,12 @@ def _build_roi_annotation(item_name, discount_str, prices_db):
     if not savings:
         return None
 
-    parts = [f"Save: ${savings['savings_vs_base']:,}"]
+    # For properties with location-based pricing (e.g. Weed Farm $715K-$1.35M),
+    # show "from $X" to indicate savings are based on the cheapest option.
+    if savings.get("max_price"):
+        parts = [f"Save: from ${savings['savings_vs_base']:,}"]
+    else:
+        parts = [f"Save: ${savings['savings_vs_base']:,}"]
 
     # Check heist ROI
     heist = _find_heist_for_digest(savings["item"], prices_db)

@@ -169,6 +169,10 @@ def calculate_discount_savings(item_name, discount_percent, prices_db=None):
 
     result["savings_vs_base"] = base - result["best_price"]
 
+    # Propagate max_price for properties with location-based pricing
+    if item.get("max_price"):
+        result["max_price"] = item["max_price"]
+
     return result
 
 
@@ -515,9 +519,13 @@ def generate_purchase_recommendation(discounts, budget, prices_db=None,
 
 
 def _norm(name):
-    """Quick lowercase normalise for matching."""
-    lower = name.lower().strip()
-    return re.sub(r"[^a-z0-9\s]", "", lower).strip()
+    """Quick lowercase normalise for matching.
+
+    Collapses Unicode whitespace (e.g. \\xa0) to regular spaces so that
+    names from Reddit with non-breaking spaces still match DB entries.
+    """
+    lower = re.sub(r"\s+", " ", name).strip().lower()
+    return re.sub(r"[^a-z0-9 ]", "", lower).strip()
 
 
 def _find_in_db(item_name, prices_db):
